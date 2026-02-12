@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { conversation } from '$lib/stores/conversation.svelte';
+	import { settings } from '$lib/stores/settings.svelte';
+	import { streamChat } from '$lib/api/openclaw';
 	import { WebSpeechSTT } from '$lib/stt/webspeech';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { onMount } from 'svelte';
@@ -121,38 +123,11 @@
 		let sentenceBuffer = '';
 
 		try {
-			const response = await fetch('/api/chat', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					messages: messages.slice(0, -1).map((m) => ({ role: m.role, content: m.content }))
-				})
-			});
-
-			if (!response.ok) throw new Error(`HTTP ${response.status}`);
-			if (!response.body) throw new Error('No response body');
-
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
-			let buffer = '';
-
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split('\n');
-				buffer = lines.pop() || '';
-
-				for (const line of lines) {
-					if (!line.startsWith('data: ')) continue;
-					const data = line.slice(6);
-					if (data === '[DONE]') break;
-
-					try {
-						const parsed = JSON.parse(data);
-						const delta = parsed.choices?.[0]?.delta?.content;
-						if (delta) {
+			await new Promise<void>((resolve, reject) => {
+				streamChat(
+					messages.slice(0, -1).map((m) => ({ role: m.role, content: m.content })),
+					{
+						onDelta: (delta) => {
 							fullResponse += delta;
 							messages[assistantIdx].content = fullResponse;
 							scrollToBottom();
@@ -166,17 +141,18 @@
 									sentenceBuffer = '';
 								}
 							}
-						}
-					} catch {
-						// skip
+						},
+						onDone: () => {
+							// Speak remaining buffer
+							if (sentenceBuffer.trim() && conversation.micEnabled) {
+								tts?.addChunk(sentenceBuffer.trim());
+							}
+							resolve();
+						},
+						onError: (err) => reject(err)
 					}
-				}
-			}
-
-			// Speak remaining buffer
-			if (sentenceBuffer.trim() && conversation.micEnabled) {
-				tts?.addChunk(sentenceBuffer.trim());
-			}
+				);
+			});
 		} catch (err) {
 			messages[assistantIdx].content = `⚠️ 오류: ${err instanceof Error ? err.message : '알 수 없는 오류'}`;
 		} finally {

@@ -1,9 +1,35 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { settings } from '$lib/stores/settings.svelte';
+
+	let testStatus = $state<'idle' | 'testing' | 'ok' | 'error'>('idle');
+	let testMessage = $state('');
+
+	async function testConnection() {
+		testStatus = 'testing';
+		testMessage = '';
+		try {
+			const res = await fetch(`${settings.gatewayUrl}/v1/models`, {
+				headers: settings.gatewayToken
+					? { Authorization: `Bearer ${settings.gatewayToken}` }
+					: {},
+				signal: AbortSignal.timeout(5000)
+			});
+			if (res.ok) {
+				testStatus = 'ok';
+				testMessage = '연결 성공!';
+			} else {
+				testStatus = 'error';
+				testMessage = `HTTP ${res.status}`;
+			}
+		} catch (err) {
+			testStatus = 'error';
+			testMessage = err instanceof Error ? err.message : '연결 실패';
+		}
+	}
 </script>
 
-<div class="flex flex-col h-screen">
-	<!-- Header -->
+<div class="flex flex-col h-screen bg-gray-950 text-white">
 	<header class="flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<button onclick={() => goto('/')} class="p-2 rounded-lg hover:bg-gray-800 transition-colors">
 			←
@@ -12,48 +38,102 @@
 	</header>
 
 	<div class="flex-1 overflow-y-auto px-4 py-6 space-y-6">
+		<!-- Server Settings -->
+		<section>
+			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🔗 서버 설정</h2>
+			<div class="space-y-4 bg-gray-900 rounded-xl p-4">
+				<div>
+					<label for="gateway-url" class="block text-sm text-gray-400 mb-1">Gateway URL</label>
+					<input
+						id="gateway-url"
+						type="url"
+						bind:value={settings.gatewayUrl}
+						placeholder="http://192.168.0.10:18789"
+						class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+					/>
+				</div>
+				<div>
+					<label for="gateway-token" class="block text-sm text-gray-400 mb-1">Token</label>
+					<input
+						id="gateway-token"
+						type="password"
+						bind:value={settings.gatewayToken}
+						placeholder="Bearer token"
+						class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+					/>
+				</div>
+				<button
+					onclick={testConnection}
+					disabled={testStatus === 'testing'}
+					class="w-full px-4 py-2 rounded-lg font-medium transition-colors
+						{testStatus === 'testing' ? 'bg-gray-700 text-gray-400' :
+						 testStatus === 'ok' ? 'bg-green-700 text-white' :
+						 testStatus === 'error' ? 'bg-red-700 text-white' :
+						 'bg-blue-600 hover:bg-blue-500 text-white'}"
+				>
+					{#if testStatus === 'testing'}
+						연결 테스트 중...
+					{:else if testStatus === 'ok'}
+						✅ {testMessage}
+					{:else if testStatus === 'error'}
+						❌ {testMessage}
+					{:else}
+						연결 테스트
+					{/if}
+				</button>
+			</div>
+		</section>
+
 		<!-- Voice Settings -->
 		<section>
-			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🔊 음성 설정</h2>
+			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🔊 음성 출력</h2>
 			<div class="space-y-3 bg-gray-900 rounded-xl p-4">
 				<div class="flex justify-between items-center">
 					<span>TTS 엔진</span>
-					<span class="text-gray-500">ElevenLabs (Phase 4)</span>
-				</div>
-				<div class="flex justify-between items-center">
-					<span>음성</span>
-					<span class="text-gray-500">미설정</span>
+					<select
+						bind:value={settings.ttsEngine}
+						class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white"
+					>
+						<option value="webspeech">Web Speech API</option>
+						<option value="elevenlabs" disabled>ElevenLabs (준비중)</option>
+					</select>
 				</div>
 			</div>
 		</section>
 
 		<!-- Input Settings -->
 		<section>
-			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🎤 입력 설정</h2>
+			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🎤 음성 입력</h2>
 			<div class="space-y-3 bg-gray-900 rounded-xl p-4">
 				<div class="flex justify-between items-center">
 					<span>STT 엔진</span>
-					<span class="text-gray-500">Deepgram (Phase 3)</span>
+					<select
+						bind:value={settings.sttEngine}
+						class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white"
+					>
+						<option value="webspeech">Web Speech API</option>
+						<option value="deepgram" disabled>Deepgram (준비중)</option>
+					</select>
 				</div>
 				<div class="flex justify-between items-center">
 					<span>언어</span>
-					<span class="text-gray-500">한국어</span>
+					<select
+						bind:value={settings.language}
+						class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-white"
+					>
+						<option value="ko-KR">한국어</option>
+						<option value="en-US">English</option>
+						<option value="ja-JP">日本語</option>
+					</select>
 				</div>
 			</div>
 		</section>
 
-		<!-- Server Settings -->
+		<!-- Info -->
 		<section>
-			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🔗 서버 설정</h2>
-			<div class="space-y-3 bg-gray-900 rounded-xl p-4">
-				<div class="flex justify-between items-center">
-					<span>Gateway</span>
-					<span class="text-gray-500">localhost:18789</span>
-				</div>
-				<div class="flex justify-between items-center">
-					<span>상태</span>
-					<span class="text-green-400">연결됨 ✓</span>
-				</div>
+			<div class="bg-gray-900/50 rounded-xl p-4 text-sm text-gray-500">
+				<p>🦖 VoiceChat v0.1</p>
+				<p>OpenClaw Gateway 연동 음성 AI 채팅</p>
 			</div>
 		</section>
 	</div>
