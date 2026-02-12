@@ -3,6 +3,7 @@
 	import { conversation } from '$lib/stores/conversation.svelte';
 	import { settings } from '$lib/stores/settings.svelte';
 	import { streamChat } from '$lib/api/openclaw';
+	import { checkServerHealth } from '$lib/api/health';
 	import { WebSpeechSTT } from '$lib/stt/webspeech';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { onMount } from 'svelte';
@@ -18,6 +19,10 @@
 	let messagesContainer: HTMLDivElement;
 	let showTextInput = $state(false);
 
+	// Connection state
+	let connectionState = $state<'checking' | 'connected' | 'failed'>('checking');
+	let connectionError = $state('');
+
 	let stt: WebSpeechSTT | null = $state(null);
 	let tts: WebSpeechTTS | null = $state(null);
 	let waveformBars: number[] = $state(Array(24).fill(4));
@@ -31,7 +36,17 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		// Check server connectivity on startup
+		if (settings.gatewayUrl) {
+			const health = await checkServerHealth();
+			connectionState = health.ok ? 'connected' : 'failed';
+			connectionError = health.error || '';
+		} else {
+			connectionState = 'failed';
+			connectionError = '서버 주소가 설정되지 않았습니다';
+		}
+
 		// Initialize TTS
 		tts = new WebSpeechTTS({
 			onStart: () => conversation.setSpeaking(),
@@ -178,6 +193,41 @@
 	}
 </script>
 
+{#if connectionState === 'checking'}
+<!-- Splash / Connection Check -->
+<div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-4">
+	<span class="text-6xl animate-pulse">🦖</span>
+	<p class="text-gray-400">서버 연결 중...</p>
+</div>
+
+{:else if connectionState === 'failed'}
+<!-- Connection Failed → Show setup -->
+<div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-6 px-8">
+	<span class="text-6xl">🦖</span>
+	<p class="text-xl font-semibold">서버에 연결할 수 없습니다</p>
+	<p class="text-gray-400 text-center text-sm">{connectionError || settings.gatewayUrl}</p>
+	<div class="flex gap-3">
+		<button
+			onclick={() => goto('/settings')}
+			class="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors"
+		>
+			⚙️ 서버 설정
+		</button>
+		<button
+			onclick={async () => {
+				connectionState = 'checking';
+				const h = await checkServerHealth();
+				connectionState = h.ok ? 'connected' : 'failed';
+				connectionError = h.error || '';
+			}}
+			class="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium transition-colors"
+		>
+			🔄 재시도
+		</button>
+	</div>
+</div>
+
+{:else}
 <div class="flex flex-col h-screen bg-gray-950 text-white">
 	<!-- Header -->
 	<header class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
@@ -300,3 +350,4 @@
 		</div>
 	{/if}
 </div>
+{/if}
