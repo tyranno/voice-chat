@@ -4,6 +4,7 @@
 	import { settings } from '$lib/stores/settings.svelte';
 	import { streamChat } from '$lib/api/openclaw';
 	import { checkServerHealth } from '$lib/api/health';
+	import { getInstances, type Instance } from '$lib/api/instances';
 	import { WebSpeechSTT } from '$lib/stt/webspeech';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { onMount } from 'svelte';
@@ -20,8 +21,9 @@
 	let showTextInput = $state(false);
 
 	// Connection state
-	let connectionState = $state<'checking' | 'connected' | 'failed'>('checking');
+	let appState = $state<'checking' | 'no-server' | 'select-instance' | 'no-instance' | 'connected'>('checking');
 	let connectionError = $state('');
+	let instances = $state<Instance[]>([]);
 
 	let stt: WebSpeechSTT | null = $state(null);
 	let tts: WebSpeechTTS | null = $state(null);
@@ -36,16 +38,57 @@
 		}
 	}
 
-	onMount(async () => {
-		// Check server connectivity on startup
-		if (settings.gatewayUrl) {
-			const health = await checkServerHealth();
-			connectionState = health.ok ? 'connected' : 'failed';
-			connectionError = health.error || '';
-		} else {
-			connectionState = 'failed';
+	async function checkConnection() {
+		appState = 'checking';
+		connectionError = '';
+
+		if (!settings.serverUrl) {
+			appState = 'no-server';
 			connectionError = '서버 주소가 설정되지 않았습니다';
+			return;
 		}
+
+		// 1. Health check
+		const health = await checkServerHealth();
+		if (!health.ok) {
+			appState = 'no-server';
+			connectionError = health.error || '서버 연결 실패';
+			return;
+		}
+
+		// 2. Fetch instances
+		try {
+			instances = await getInstances();
+		} catch (err) {
+			appState = 'no-server';
+			connectionError = `인스턴스 조회 실패: ${err instanceof Error ? err.message : ''}`;
+			return;
+		}
+
+		if (instances.length === 0) {
+			appState = 'no-instance';
+			return;
+		}
+
+		// 3. Auto-select if saved instance still exists, or only 1 instance
+		const savedExists = instances.find(i => i.id === settings.selectedInstance);
+		if (savedExists) {
+			appState = 'connected';
+		} else if (instances.length === 1) {
+			settings.selectedInstance = instances[0].id;
+			appState = 'connected';
+		} else {
+			appState = 'select-instance';
+		}
+	}
+
+	function selectInstance(id: string) {
+		settings.selectedInstance = id;
+		appState = 'connected';
+	}
+
+	onMount(async () => {
+		await checkConnection();
 
 		// Initialize TTS
 		tts = new WebSpeechTTS({
@@ -117,12 +160,10 @@
 		const finalText = text || input.trim();
 		if (!finalText || isLoading) return;
 
-		// Barge-in: stop TTS if speaking
 		if (conversation.state === 'speaking') {
 			tts?.stop();
 		}
 
-		// Stop STT during processing
 		stt?.stop();
 		conversation.setProcessing();
 
@@ -147,7 +188,6 @@
 							messages[assistantIdx].content = fullResponse;
 							scrollToBottom();
 
-							// Stream TTS: accumulate and speak sentence by sentence
 							if (conversation.micEnabled) {
 								sentenceBuffer += delta;
 								const sentenceEnd = sentenceBuffer.match(/[.!?。\n]/);
@@ -158,7 +198,6 @@
 							}
 						},
 						onDone: () => {
-							// Speak remaining buffer
 							if (sentenceBuffer.trim() && conversation.micEnabled) {
 								tts?.addChunk(sentenceBuffer.trim());
 							}
@@ -173,11 +212,9 @@
 		} finally {
 			isLoading = false;
 
-			// If mic not enabled or no TTS, go to idle
 			if (!conversation.micEnabled) {
 				conversation.setIdle();
 			} else if (!tts?.isSpeaking) {
-				// TTS didn't start (empty response), go back to listening
 				conversation.setListening();
 				stt?.start();
 			}
@@ -193,19 +230,19 @@
 	}
 </script>
 
-{#if connectionState === 'checking'}
+{#if appState === 'checking'}
 <!-- Splash / Connection Check -->
 <div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-4">
 	<span class="text-6xl animate-pulse">🦖</span>
 	<p class="text-gray-400">서버 연결 중...</p>
 </div>
 
-{:else if connectionState === 'failed'}
-<!-- Connection Failed → Show setup -->
+{:else if appState === 'no-server'}
+<!-- Server unreachable or not configured -->
 <div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-6 px-8">
 	<span class="text-6xl">🦖</span>
 	<p class="text-xl font-semibold">서버에 연결할 수 없습니다</p>
-	<p class="text-gray-400 text-center text-sm">{connectionError || settings.gatewayUrl}</p>
+	<p class="text-gray-400 text-center text-sm">{connectionError || settings.serverUrl}</p>
 	<div class="flex gap-3">
 		<button
 			onclick={() => goto('/settings')}
@@ -214,12 +251,7 @@
 			⚙️ 서버 설정
 		</button>
 		<button
-			onclick={async () => {
-				connectionState = 'checking';
-				const h = await checkServerHealth();
-				connectionState = h.ok ? 'connected' : 'failed';
-				connectionError = h.error || '';
-			}}
+			onclick={checkConnection}
 			class="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium transition-colors"
 		>
 			🔄 재시도
@@ -227,12 +259,78 @@
 	</div>
 </div>
 
+{:else if appState === 'no-instance'}
+<!-- Server OK but no bridges connected -->
+<div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-6 px-8">
+	<span class="text-6xl">🦖</span>
+	<p class="text-xl font-semibold">연결된 인스턴스 없음</p>
+	<p class="text-gray-400 text-center text-sm">서버에 연결되었지만, OpenClaw 인스턴스가 없습니다.<br/>ClawBridge를 실행해주세요.</p>
+	<div class="flex gap-3">
+		<button
+			onclick={checkConnection}
+			class="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors"
+		>
+			🔄 새로고침
+		</button>
+		<button
+			onclick={() => goto('/settings')}
+			class="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium transition-colors"
+		>
+			⚙️ 설정
+		</button>
+	</div>
+</div>
+
+{:else if appState === 'select-instance'}
+<!-- Multiple instances available -->
+<div class="flex flex-col h-screen bg-gray-950 text-white">
+	<header class="flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
+		<span class="text-xl">🦖</span>
+		<span class="font-semibold text-lg">인스턴스 선택</span>
+	</header>
+	<div class="flex-1 overflow-y-auto px-4 py-6 space-y-3">
+		<p class="text-gray-400 text-sm mb-4">대화할 OpenClaw 인스턴스를 선택하세요</p>
+		{#each instances as inst}
+			<button
+				onclick={() => selectInstance(inst.id)}
+				class="w-full flex items-center gap-4 p-4 bg-gray-900 hover:bg-gray-800 rounded-xl transition-colors text-left"
+			>
+				<span class="text-3xl">🖥️</span>
+				<div class="flex-1">
+					<p class="font-medium text-white">{inst.name}</p>
+					<p class="text-sm text-gray-400">{inst.status} · {new Date(inst.connectedAt).toLocaleString('ko-KR')}</p>
+				</div>
+				<span class="text-2xl text-gray-500">→</span>
+			</button>
+		{/each}
+	</div>
+	<div class="px-4 pb-6 flex gap-3">
+		<button
+			onclick={checkConnection}
+			class="flex-1 px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium transition-colors"
+		>
+			🔄 새로고침
+		</button>
+		<button
+			onclick={() => goto('/settings')}
+			class="px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors"
+		>
+			⚙️
+		</button>
+	</div>
+</div>
+
 {:else}
+<!-- Connected — Chat UI -->
 <div class="flex flex-col h-screen bg-gray-950 text-white">
 	<!-- Header -->
 	<header class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<div class="flex items-center gap-2">
-			<span class="text-xl">🦖</span>
+			<button
+				onclick={() => { appState = 'select-instance'; }}
+				class="text-xl hover:scale-110 transition-transform"
+				title="인스턴스 변경"
+			>🦖</button>
 			<span class="font-semibold text-lg">렉스</span>
 			<span
 				class="text-xs px-2 py-0.5 rounded-full"
@@ -275,12 +373,8 @@
 					{#if message.role === 'assistant' && !message.content && isLoading}
 						<span class="inline-flex gap-1">
 							<span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-							<span
-								class="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.1s]"
-							></span>
-							<span
-								class="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]"
-							></span>
+							<span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.1s]"></span>
+							<span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
 						</span>
 					{:else}
 						<p class="whitespace-pre-wrap">{message.content}</p>
@@ -292,14 +386,12 @@
 
 	<!-- Waveform + Interim -->
 	<div class="px-4 py-2 space-y-2">
-		<!-- Interim text (real-time subtitle) -->
 		{#if conversation.interimText}
 			<div class="text-center text-sm text-gray-400 italic truncate">
 				"{conversation.interimText}"
 			</div>
 		{/if}
 
-		<!-- Waveform visualization -->
 		<div
 			class="flex items-center justify-center h-16 rounded-xl border transition-colors duration-300"
 			style="background-color: {conversation.stateColor}08; border-color: {conversation.stateColor}30"
@@ -314,7 +406,6 @@
 			</div>
 		</div>
 
-		<!-- Mic toggle button -->
 		<div class="flex justify-center">
 			<button
 				onclick={toggleMic}

@@ -5,16 +5,18 @@
 const STORAGE_KEY = 'voicechat-settings';
 
 interface Settings {
-	gatewayUrl: string;
-	gatewayToken: string;
+	serverUrl: string;
+	authToken: string;
+	selectedInstance: string;
 	ttsEngine: 'webspeech' | 'elevenlabs';
 	sttEngine: 'webspeech' | 'deepgram';
 	language: string;
 }
 
 const defaults: Settings = {
-	gatewayUrl: 'http://192.168.0.10:18789',
-	gatewayToken: '',
+	serverUrl: '',
+	authToken: '',
+	selectedInstance: '',
 	ttsEngine: 'webspeech',
 	sttEngine: 'webspeech',
 	language: 'ko-KR'
@@ -39,11 +41,14 @@ function save(s: Settings) {
 class SettingsStore {
 	#settings: Settings = $state(load());
 
-	get gatewayUrl() { return this.#settings.gatewayUrl; }
-	set gatewayUrl(v: string) { this.#settings.gatewayUrl = v; save(this.#settings); }
+	get serverUrl() { return this.#settings.serverUrl; }
+	set serverUrl(v: string) { this.#settings.serverUrl = v; save(this.#settings); }
 
-	get gatewayToken() { return this.#settings.gatewayToken; }
-	set gatewayToken(v: string) { this.#settings.gatewayToken = v; save(this.#settings); }
+	get authToken() { return this.#settings.authToken; }
+	set authToken(v: string) { this.#settings.authToken = v; save(this.#settings); }
+
+	get selectedInstance() { return this.#settings.selectedInstance; }
+	set selectedInstance(v: string) { this.#settings.selectedInstance = v; save(this.#settings); }
 
 	get ttsEngine() { return this.#settings.ttsEngine; }
 	set ttsEngine(v: 'webspeech' | 'elevenlabs') { this.#settings.ttsEngine = v; save(this.#settings); }
@@ -54,8 +59,19 @@ class SettingsStore {
 	get language() { return this.#settings.language; }
 	set language(v: string) { this.#settings.language = v; save(this.#settings); }
 
+	/** Health check endpoint */
+	get healthEndpoint() {
+		return `${this.serverUrl}/health`;
+	}
+
+	/** Instances list endpoint */
+	get instancesEndpoint() {
+		return `${this.serverUrl}/api/instances`;
+	}
+
+	/** Chat endpoint */
 	get chatEndpoint() {
-		return `${this.gatewayUrl}/v1/chat/completions`;
+		return `${this.serverUrl}/api/chat`;
 	}
 }
 

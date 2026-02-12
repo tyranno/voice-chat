@@ -1,5 +1,5 @@
 /**
- * OpenClaw Gateway client — direct SSE streaming from browser
+ * Chat client — streams via VoiceChat server relay to OpenClaw bridge
  */
 import { settings } from '$lib/stores/settings.svelte';
 
@@ -15,35 +15,27 @@ interface StreamCallbacks {
 }
 
 export async function streamChat(messages: Message[], callbacks: StreamCallbacks): Promise<void> {
-	const headers: Record<string, string> = {
-		'Content-Type': 'application/json',
-		'x-openclaw-agent-id': 'main'
-	};
-
-	if (settings.gatewayToken) {
-		headers['Authorization'] = `Bearer ${settings.gatewayToken}`;
-	}
-
 	let response: Response;
 	try {
 		response = await fetch(settings.chatEndpoint, {
 			method: 'POST',
-			headers,
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${settings.authToken}`
+			},
 			body: JSON.stringify({
-				model: 'openclaw',
-				stream: true,
-				user: 'voicechat-app',
+				instanceId: settings.selectedInstance,
 				messages
 			})
 		});
 	} catch (err) {
-		callbacks.onError(new Error(`연결 실패: ${settings.gatewayUrl} 에 접속할 수 없습니다`));
+		callbacks.onError(new Error(`연결 실패: ${settings.serverUrl} 에 접속할 수 없습니다`));
 		return;
 	}
 
 	if (!response.ok) {
 		const errText = await response.text().catch(() => '');
-		callbacks.onError(new Error(`Gateway 오류 ${response.status}: ${errText}`));
+		callbacks.onError(new Error(`서버 오류 ${response.status}: ${errText}`));
 		return;
 	}
 
@@ -75,9 +67,12 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 
 				try {
 					const parsed = JSON.parse(data);
-					const delta = parsed.choices?.[0]?.delta?.content;
-					if (delta) {
-						callbacks.onDelta(delta);
+					if (parsed.error) {
+						callbacks.onError(new Error(parsed.error));
+						return;
+					}
+					if (parsed.delta) {
+						callbacks.onDelta(parsed.delta);
 					}
 				} catch {
 					// skip malformed JSON

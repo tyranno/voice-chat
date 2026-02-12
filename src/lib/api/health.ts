@@ -1,25 +1,27 @@
 /**
- * Server health check — ping Gateway to verify connectivity
+ * Server health check — ping VoiceChat server
  */
 import { settings } from '$lib/stores/settings.svelte';
 
-export async function checkServerHealth(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
+export interface HealthResult {
+	ok: boolean;
+	latencyMs: number;
+	instances?: number;
+	error?: string;
+}
+
+export async function checkServerHealth(): Promise<HealthResult> {
 	const start = Date.now();
 	try {
-		const headers: Record<string, string> = {};
-		if (settings.gatewayToken) {
-			headers['Authorization'] = `Bearer ${settings.gatewayToken}`;
-		}
-
-		const res = await fetch(`${settings.gatewayUrl}/v1/models`, {
-			headers,
+		const res = await fetch(settings.healthEndpoint, {
 			signal: AbortSignal.timeout(5000)
 		});
 
 		const latencyMs = Date.now() - start;
 
 		if (res.ok) {
-			return { ok: true, latencyMs };
+			const data = await res.json();
+			return { ok: true, latencyMs, instances: data.instances ?? 0 };
 		}
 		return { ok: false, latencyMs, error: `HTTP ${res.status}` };
 	} catch (err) {

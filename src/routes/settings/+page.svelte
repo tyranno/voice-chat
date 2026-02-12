@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { settings } from '$lib/stores/settings.svelte';
+	import { checkServerHealth } from '$lib/api/health';
 
 	let testStatus = $state<'idle' | 'testing' | 'ok' | 'error'>('idle');
 	let testMessage = $state('');
@@ -8,23 +9,13 @@
 	async function testConnection() {
 		testStatus = 'testing';
 		testMessage = '';
-		try {
-			const res = await fetch(`${settings.gatewayUrl}/v1/models`, {
-				headers: settings.gatewayToken
-					? { Authorization: `Bearer ${settings.gatewayToken}` }
-					: {},
-				signal: AbortSignal.timeout(5000)
-			});
-			if (res.ok) {
-				testStatus = 'ok';
-				testMessage = '연결 성공!';
-			} else {
-				testStatus = 'error';
-				testMessage = `HTTP ${res.status}`;
-			}
-		} catch (err) {
+		const health = await checkServerHealth();
+		if (health.ok) {
+			testStatus = 'ok';
+			testMessage = `연결 성공! (${health.latencyMs}ms, 인스턴스 ${health.instances ?? 0}개)`;
+		} else {
 			testStatus = 'error';
-			testMessage = err instanceof Error ? err.message : '연결 실패';
+			testMessage = health.error || '연결 실패';
 		}
 	}
 </script>
@@ -43,22 +34,23 @@
 			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🔗 서버 설정</h2>
 			<div class="space-y-4 bg-gray-900 rounded-xl p-4">
 				<div>
-					<label for="gateway-url" class="block text-sm text-gray-400 mb-1">Gateway URL</label>
+					<label for="server-url" class="block text-sm text-gray-400 mb-1">서버 URL</label>
 					<input
-						id="gateway-url"
+						id="server-url"
 						type="url"
-						bind:value={settings.gatewayUrl}
-						placeholder="http://192.168.0.10:18789"
+						bind:value={settings.serverUrl}
+						placeholder="https://voicechat.example.com"
 						class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
 					/>
+					<p class="text-xs text-gray-500 mt-1">VoiceChat 중계 서버 주소</p>
 				</div>
 				<div>
-					<label for="gateway-token" class="block text-sm text-gray-400 mb-1">Token</label>
+					<label for="auth-token" class="block text-sm text-gray-400 mb-1">인증 토큰</label>
 					<input
-						id="gateway-token"
+						id="auth-token"
 						type="password"
-						bind:value={settings.gatewayToken}
-						placeholder="Bearer token"
+						bind:value={settings.authToken}
+						placeholder="AUTH_TOKEN"
 						class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
 					/>
 				</div>
@@ -132,8 +124,8 @@
 		<!-- Info -->
 		<section>
 			<div class="bg-gray-900/50 rounded-xl p-4 text-sm text-gray-500">
-				<p>🦖 VoiceChat v0.1</p>
-				<p>OpenClaw Gateway 연동 음성 AI 채팅</p>
+				<p>🦖 VoiceChat v0.2</p>
+				<p>VoiceChat Server → ClawBridge → OpenClaw</p>
 			</div>
 		</section>
 	</div>
