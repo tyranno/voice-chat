@@ -20,8 +20,8 @@
 	}
 </script>
 
-<div class="flex flex-col h-screen bg-gray-950 text-white">
-	<header class="flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
+<div class="app-container bg-gray-950 text-white">
+	<header class="flex-shrink-0 flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<button onclick={() => goto('/')} class="p-2 rounded-lg hover:bg-gray-800 transition-colors">
 			←
 		</button>
