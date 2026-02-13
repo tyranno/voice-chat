@@ -52,6 +52,12 @@
 			return;
 		}
 
+		// 0. Check if registered
+		if (!settings.isRegistered) {
+			goto('/register');
+			return;
+		}
+
 		// 1. Health check
 		const health = await checkServerHealth();
 		if (!health.ok) {

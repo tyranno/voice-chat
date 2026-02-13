@@ -76,6 +76,42 @@
 			</div>
 		</section>
 
+		<!-- Device Registration -->
+		<section>
+			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">📱 기기 등록</h2>
+			<div class="space-y-3 bg-gray-900 rounded-xl p-4">
+				{#if settings.isRegistered}
+					<div class="flex justify-between items-center">
+						<span>기기 이름</span>
+						<span class="text-green-400">{settings.deviceName}</span>
+					</div>
+					<div class="flex justify-between items-center">
+						<span>상태</span>
+						<span class="text-green-400">✅ 등록됨</span>
+					</div>
+					<button
+						onclick={() => {
+							settings.authToken = '';
+							settings.deviceId = '';
+							settings.deviceName = '';
+							goto('/register');
+						}}
+						class="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium transition-colors text-sm"
+					>
+						재등록
+					</button>
+				{:else}
+					<p class="text-gray-400 text-sm">기기가 등록되지 않았습니다</p>
+					<button
+						onclick={() => goto('/register')}
+						class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors"
+					>
+						기기 등록하기
+					</button>
+				{/if}
+			</div>
+		</section>
+
 		<!-- Voice Settings -->
 		<section>
 			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🔊 음성 출력</h2>
