@@ -5,7 +5,7 @@
 	import { streamChat } from '$lib/api/openclaw';
 	import { checkServerHealth } from '$lib/api/health';
 	import { getInstances, type Instance } from '$lib/api/instances';
-	import { WebSpeechSTT } from '$lib/stt/webspeech';
+	import { createSTT, type STTEngine } from '$lib/stt';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { onMount } from 'svelte';
 
@@ -25,7 +25,7 @@
 	let connectionError = $state('');
 	let instances = $state<Instance[]>([]);
 
-	let stt: WebSpeechSTT | null = $state(null);
+	let stt: STTEngine | null = $state(null);
 	let tts: WebSpeechTTS | null = $state(null);
 	let waveformBars: number[] = $state(Array(24).fill(4));
 	let animFrame = 0;
@@ -104,8 +104,8 @@
 			onSentence: () => {}
 		});
 
-		// Initialize STT
-		stt = new WebSpeechSTT({
+		// Initialize STT (native on Android, Web Speech on browser)
+		stt = createSTT({
 			onInterim: (text) => {
 				conversation.interimText = text;
 			},
