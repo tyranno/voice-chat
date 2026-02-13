@@ -20,8 +20,7 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 		response = await fetch(settings.chatEndpoint, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json',
-				'Authorization': `Bearer ${settings.authToken}`
+				'Content-Type': 'application/json'
 			},
 			body: JSON.stringify({
 				instanceId: settings.selectedInstance,

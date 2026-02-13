@@ -32,7 +32,6 @@
 	let waveformBars: number[] = $state(Array(24).fill(4));
 	let animFrame = 0;
 	let sttError = $state('');
-	let debugInfo = $state('');
 
 	function scrollToBottom() {
 		if (messagesContainer) {
@@ -46,15 +45,9 @@
 		appState = 'checking';
 		connectionError = '';
 
-		if (!settings.serverUrl) {
+		if (!settings.isConfigured) {
 			appState = 'no-server';
-			connectionError = '서버 주소가 설정되지 않았습니다';
-			return;
-		}
-
-		// 0. Check if registered
-		if (!settings.isRegistered) {
-			goto('/register');
+			connectionError = '서버 주소를 설정해주세요';
 			return;
 		}
 
@@ -98,11 +91,6 @@
 	}
 
 	onMount(async () => {
-		// Debug info
-		const isNative = Capacitor.isNativePlatform();
-		const platform = Capacitor.getPlatform();
-		debugInfo = `Platform: ${platform}, Native: ${isNative}`;
-		
 		await checkConnection();
 
 		// Initialize TTS
@@ -139,15 +127,8 @@
 		};
 
 		if (Capacitor.isNativePlatform()) {
-			debugInfo += ' | STT: Capacitor';
-			try {
-				stt = new CapacitorSTT(sttCallbacks);
-				debugInfo += ' (created)';
-			} catch (e) {
-				debugInfo += ` (error: ${e})`;
-			}
+			stt = new CapacitorSTT(sttCallbacks);
 		} else {
-			debugInfo += ' | STT: WebSpeech';
 			stt = new WebSpeechSTT(sttCallbacks);
 		}
 
@@ -176,10 +157,9 @@
 
 	async function toggleMic() {
 		conversation.micEnabled = !conversation.micEnabled;
-		sttError = ''; // Clear previous error
+		sttError = '';
 		if (conversation.micEnabled) {
 			conversation.setListening();
-			debugInfo += ' | 마이크 시작...';
 			try {
 				await stt?.start();
 			} catch (e) {
@@ -423,12 +403,6 @@
 
 	<!-- Waveform + Interim -->
 	<div class="px-4 py-2 space-y-2">
-		{#if debugInfo}
-			<div class="text-center text-xs text-yellow-400 bg-yellow-900/30 rounded-lg px-2 py-1">
-				🔧 {debugInfo}
-			</div>
-		{/if}
-		
 		{#if sttError}
 			<div class="text-center text-sm text-red-400 bg-red-900/30 rounded-lg px-3 py-2">
 				⚠️ {sttError}

@@ -12,9 +12,6 @@ export interface Instance {
 
 export async function getInstances(): Promise<Instance[]> {
 	const res = await fetch(settings.instancesEndpoint, {
-		headers: {
-			'Authorization': `Bearer ${settings.authToken}`
-		},
 		signal: AbortSignal.timeout(5000)
 	});
 

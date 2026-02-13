@@ -6,9 +6,6 @@ const STORAGE_KEY = 'voicechat-settings';
 
 interface Settings {
 	serverUrl: string;
-	authToken: string;
-	deviceId: string;
-	deviceName: string;
 	selectedInstance: string;
 	ttsEngine: 'webspeech' | 'elevenlabs';
 	sttEngine: 'webspeech' | 'deepgram';
@@ -17,9 +14,6 @@ interface Settings {
 
 const defaults: Settings = {
 	serverUrl: '',
-	authToken: '',
-	deviceId: '',
-	deviceName: '',
 	selectedInstance: '',
 	ttsEngine: 'webspeech',
 	sttEngine: 'webspeech',
@@ -48,16 +42,7 @@ class SettingsStore {
 	get serverUrl() { return this.#settings.serverUrl; }
 	set serverUrl(v: string) { this.#settings.serverUrl = v; save(this.#settings); }
 
-	get authToken() { return this.#settings.authToken; }
-	set authToken(v: string) { this.#settings.authToken = v; save(this.#settings); }
-
-	get deviceId() { return this.#settings.deviceId; }
-	set deviceId(v: string) { this.#settings.deviceId = v; save(this.#settings); }
-
-	get deviceName() { return this.#settings.deviceName; }
-	set deviceName(v: string) { this.#settings.deviceName = v; save(this.#settings); }
-
-	get isRegistered() { return !!this.#settings.authToken && !!this.#settings.deviceId; }
+	get isConfigured() { return !!this.#settings.serverUrl; }
 
 	get selectedInstance() { return this.#settings.selectedInstance; }
 	set selectedInstance(v: string) { this.#settings.selectedInstance = v; save(this.#settings); }
@@ -71,20 +56,9 @@ class SettingsStore {
 	get language() { return this.#settings.language; }
 	set language(v: string) { this.#settings.language = v; save(this.#settings); }
 
-	/** Health check endpoint */
-	get healthEndpoint() {
-		return `${this.serverUrl}/health`;
-	}
-
-	/** Instances list endpoint */
-	get instancesEndpoint() {
-		return `${this.serverUrl}/api/instances`;
-	}
-
-	/** Chat endpoint */
-	get chatEndpoint() {
-		return `${this.serverUrl}/api/chat`;
-	}
+	get healthEndpoint() { return `${this.serverUrl}/health`; }
+	get instancesEndpoint() { return `${this.serverUrl}/api/instances`; }
+	get chatEndpoint() { return `${this.serverUrl}/api/chat`; }
 }
 
 export const settings = new SettingsStore();
