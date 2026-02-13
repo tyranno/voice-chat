@@ -14,10 +14,31 @@ interface StreamCallbacks {
 	onError: (error: Error) => void;
 }
 
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 1000;
+
+async function fetchWithRetry(url: string, init: RequestInit, retries = MAX_RETRIES): Promise<Response> {
+	for (let attempt = 0; attempt <= retries; attempt++) {
+		try {
+			const controller = new AbortController();
+			const timeout = setTimeout(() => controller.abort(), 30000);
+			const res = await fetch(url, { ...init, signal: controller.signal });
+			clearTimeout(timeout);
+			return res;
+		} catch (err) {
+			if (attempt === retries) throw err;
+			const delay = RETRY_BASE_MS * Math.pow(2, attempt);
+			console.log(`[VoiceChat] 재시도 ${attempt + 1}/${retries} (${delay}ms 후)`);
+			await new Promise(r => setTimeout(r, delay));
+		}
+	}
+	throw new Error('unreachable');
+}
+
 export async function streamChat(messages: Message[], callbacks: StreamCallbacks): Promise<void> {
 	let response: Response;
 	try {
-		response = await fetch(settings.chatEndpoint, {
+		response = await fetchWithRetry(settings.chatEndpoint, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -28,7 +49,7 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 			})
 		});
 	} catch (err) {
-		callbacks.onError(new Error(`연결 실패: ${settings.serverUrl} 에 접속할 수 없습니다`));
+		callbacks.onError(new Error(`연결 실패: ${settings.serverUrl} 에 접속할 수 없습니다 (${MAX_RETRIES}회 재시도 후)`));
 		return;
 	}
 

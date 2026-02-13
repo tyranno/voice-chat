@@ -1,8 +1,11 @@
 /**
  * Capacitor Speech Recognition STT wrapper
- * Uses @capacitor-community/speech-recognition for native Android/iOS
+ * Uses patched @capgo/capacitor-speech-recognition with continuous mode.
+ * 
+ * continuous: true → native auto-restart (100ms gap, no JS roundtrip)
+ * The mic NEVER turns off unless stop() is called.
  */
-import { SpeechRecognition } from '@capacitor-community/speech-recognition';
+import { SpeechRecognition } from '@capgo/capacitor-speech-recognition';
 
 export interface STTCallbacks {
 	onInterim: (text: string) => void;
@@ -14,8 +17,10 @@ export interface STTCallbacks {
 export class CapacitorSTT {
 	private callbacks: STTCallbacks;
 	private _isListening = false;
+	private _paused = false;
 	private lang = 'ko-KR';
-	private shouldRestart = false;
+	private lastText = '';
+	private silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
 	get isListening() {
 		return this._isListening;
@@ -26,100 +31,144 @@ export class CapacitorSTT {
 	}
 
 	async start(lang = 'ko-KR') {
+		if (this._isListening) return;
 		this.lang = lang;
-		this._isListening = true;
-		this.shouldRestart = true;
+		this._paused = false;
 
 		try {
-			// Check permissions
 			const permStatus = await SpeechRecognition.checkPermissions();
 			if (permStatus.speechRecognition !== 'granted') {
 				const result = await SpeechRecognition.requestPermissions();
 				if (result.speechRecognition !== 'granted') {
 					this.callbacks.onError('마이크 권한이 거부되었습니다');
-					this._isListening = false;
-					this.shouldRestart = false;
 					return;
 				}
 			}
 
-			// Check availability
 			const { available } = await SpeechRecognition.available();
 			if (!available) {
 				this.callbacks.onError('이 기기에서 음성인식을 사용할 수 없습니다');
-				this._isListening = false;
-				this.shouldRestart = false;
 				return;
 			}
 
-			await this.startListening();
+			this._isListening = true;
+			await this.beginSession();
 		} catch (err) {
 			this.callbacks.onError(`음성인식 오류: ${err}`);
 			this._isListening = false;
-			this.shouldRestart = false;
 		}
 	}
 
-	private async startListening() {
+	pause() {
+		if (!this._isListening) return;
+		this._paused = true;
+		this.flushText();
+		// stop() tells native to stop continuous mode
+		try { SpeechRecognition.stop(); } catch {}
+		try { SpeechRecognition.removeAllListeners(); } catch {}
+		console.log('[STT] Paused');
+	}
+
+	async resume() {
+		if (!this._isListening) {
+			await this.start(this.lang);
+			return;
+		}
+		this._paused = false;
+		await this.beginSession();
+		console.log('[STT] Resumed');
+	}
+
+	private flushText() {
+		if (this.silenceTimer) {
+			clearTimeout(this.silenceTimer);
+			this.silenceTimer = null;
+		}
+		if (this.lastText.trim()) {
+			const text = this.lastText.trim();
+			this.lastText = '';
+			this.callbacks.onFinal(text);
+		}
+	}
+
+	private startSilenceTimer() {
+		if (this.silenceTimer) clearTimeout(this.silenceTimer);
+		this.silenceTimer = setTimeout(() => {
+			if (this._isListening && !this._paused && this.lastText.trim()) {
+				console.log('[STT] Silence 3s → send');
+				const text = this.lastText.trim();
+				this.lastText = '';
+				this.callbacks.onFinal(text);
+			}
+		}, 3000);
+	}
+
+	private async beginSession() {
 		try {
 			await SpeechRecognition.removeAllListeners();
 
-			SpeechRecognition.addListener('partialResults', (data) => {
+			SpeechRecognition.addListener('partialResults', (data: any) => {
+				if (this._paused) return;
 				if (data.matches && data.matches.length > 0) {
-					this.callbacks.onInterim(data.matches[0]);
+					const text = data.matches[0];
+					this.lastText = text;
+					this.callbacks.onInterim(text);
+					this.startSilenceTimer();
 				}
 			});
 
-			const result = await SpeechRecognition.start({
+			SpeechRecognition.addListener('segmentResults', (data: any) => {
+				if (this._paused) return;
+				if (data.matches && data.matches.length > 0) {
+					const text = data.matches[0].trim();
+					if (text) {
+						this.lastText = '';
+						if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
+						this.callbacks.onFinal(text);
+					}
+				}
+			});
+
+			// These are just for logging — native handles restart
+			SpeechRecognition.addListener('listeningState', (state: any) => {
+				console.log('[STT] listeningState:', state.status);
+			});
+
+			SpeechRecognition.addListener('endOfSegmentedSession', () => {
+				console.log('[STT] Segmented session ended (native will restart)');
+				this.flushText();
+			});
+
+			await (SpeechRecognition as any).start({
 				language: this.lang,
 				maxResults: 1,
 				partialResults: true,
-				popup: false
+				popup: false,
+				allowForSilence: 10000,
+				continuous: true  // NEW: native auto-restart
 			});
 
-			this._isListening = false;
+			console.log('[STT] Started (continuous native mode)');
 
-			if (result.matches && result.matches.length > 0) {
-				this.callbacks.onFinal(result.matches[0].trim());
-			}
-
-			// Auto-restart for continuous listening (like WebSpeech continuous mode)
-			if (this.shouldRestart) {
-				setTimeout(() => {
-					if (this.shouldRestart) {
-						this._isListening = true;
-						this.startListening();
-					} else {
-						this.callbacks.onEnd();
-					}
-				}, 100);
-			} else {
-				this.callbacks.onEnd();
-			}
 		} catch (err) {
-			this._isListening = false;
-			if (this.shouldRestart) {
-				// Retry after brief pause
+			console.log(`[STT] Start error: ${err}`);
+			// Retry once after 1s
+			if (this._isListening && !this._paused) {
 				setTimeout(() => {
-					if (this.shouldRestart) {
-						this._isListening = true;
-						this.startListening();
-					}
-				}, 500);
-			} else {
-				this.callbacks.onError(`음성인식 오류: ${err}`);
+					if (this._isListening && !this._paused) this.beginSession();
+				}, 1000);
 			}
 		}
 	}
 
 	async stop() {
-		this.shouldRestart = false;
 		this._isListening = false;
+		this._paused = false;
+		this.flushText();
 		try {
 			await SpeechRecognition.stop();
 			await SpeechRecognition.removeAllListeners();
-		} catch {
-			// ignore
-		}
+		} catch {}
+		this.callbacks.onEnd();
 	}
 }

@@ -7,14 +7,16 @@ const STORAGE_KEY = 'voicechat-settings';
 interface Settings {
 	serverUrl: string;
 	selectedInstance: string;
+	instanceNames: Record<string, string>; // id → custom name
 	ttsEngine: 'webspeech' | 'elevenlabs';
 	sttEngine: 'webspeech' | 'deepgram';
 	language: string;
 }
 
 const defaults: Settings = {
-	serverUrl: '',
+	serverUrl: 'https://voicechat.tyranno.xyz',
 	selectedInstance: '',
+	instanceNames: {},
 	ttsEngine: 'webspeech',
 	sttEngine: 'webspeech',
 	language: 'ko-KR'
@@ -46,6 +48,14 @@ class SettingsStore {
 
 	get selectedInstance() { return this.#settings.selectedInstance; }
 	set selectedInstance(v: string) { this.#settings.selectedInstance = v; save(this.#settings); }
+
+	getInstanceName(id: string, fallback: string) {
+		return this.#settings.instanceNames[id] || fallback;
+	}
+	setInstanceName(id: string, name: string) {
+		this.#settings.instanceNames[id] = name;
+		save(this.#settings);
+	}
 
 	get ttsEngine() { return this.#settings.ttsEngine; }
 	set ttsEngine(v: 'webspeech' | 'elevenlabs') { this.#settings.ttsEngine = v; save(this.#settings); }

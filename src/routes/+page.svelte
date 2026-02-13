@@ -7,9 +7,12 @@
 	import { getInstances, type Instance } from '$lib/api/instances';
 	import { WebSpeechSTT } from '$lib/stt/webspeech';
 	import { CapacitorSTT } from '$lib/stt/capacitor';
+	import { VoskSTT } from '$lib/stt/vosk';
 	import { Capacitor } from '@capacitor/core';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
+	import { CapacitorTTS } from '$lib/tts/capacitor';
 	import { onMount } from 'svelte';
+	// SpeechRecognition imported dynamically in checkConnection to avoid SSR issues
 
 	interface Message {
 		role: 'user' | 'assistant';
@@ -27,11 +30,30 @@
 	let connectionError = $state('');
 	let instances = $state<Instance[]>([]);
 
-	let stt: WebSpeechSTT | CapacitorSTT | null = $state(null);
-	let tts: WebSpeechTTS | null = $state(null);
+	let stt: WebSpeechSTT | CapacitorSTT | VoskSTT | null = $state(null);
+	let tts: WebSpeechTTS | CapacitorTTS | null = $state(null);
 	let waveformBars: number[] = $state(Array(24).fill(4));
 	let animFrame = 0;
 	let sttError = $state('');
+	let debugLog = $state('');
+	let finalBuffer = '';
+	let finalTimer: ReturnType<typeof setTimeout> | null = null;
+	const FINAL_DEBOUNCE_MS = 2500;
+
+	function flushFinalBuffer() {
+		if (finalBuffer.trim()) {
+			const text = finalBuffer.trim();
+			finalBuffer = '';
+			conversation.interimText = '';
+			sendMessage(text);
+		}
+	}
+
+	function addDebug(msg: string) {
+		const t = new Date().toLocaleTimeString('ko-KR');
+		debugLog = `[${t}] ${msg}\n${debugLog}`.slice(0, 2000);
+		console.log(`[VoiceChat] ${msg}`);
+	}
 
 	function scrollToBottom() {
 		if (messagesContainer) {
@@ -44,15 +66,33 @@
 	async function checkConnection() {
 		appState = 'checking';
 		connectionError = '';
+		addDebug(`서버 확인 시작: ${settings.serverUrl}`);
 
 		if (!settings.isConfigured) {
 			appState = 'no-server';
 			connectionError = '서버 주소를 설정해주세요';
+			addDebug('서버 URL 미설정');
 			return;
+		}
+
+		// 0. Request mic permission early (Android)
+		if (Capacitor.isNativePlatform()) {
+			try {
+				const { SpeechRecognition } = await import('@capgo/capacitor-speech-recognition');
+				const perm = await SpeechRecognition.checkPermissions();
+				addDebug(`마이크 권한: ${perm.speechRecognition}`);
+				if (perm.speechRecognition !== 'granted') {
+					const result = await SpeechRecognition.requestPermissions();
+					addDebug(`권한 요청 결과: ${result.speechRecognition}`);
+				}
+			} catch (e) {
+				addDebug(`권한 요청 에러: ${e}`);
+			}
 		}
 
 		// 1. Health check
 		const health = await checkServerHealth();
+		addDebug(`Health: ok=${health.ok}, ${health.latencyMs}ms, instances=${health.instances}, error=${health.error || 'none'}`);
 		if (!health.ok) {
 			appState = 'no-server';
 			connectionError = health.error || '서버 연결 실패';
@@ -62,27 +102,28 @@
 		// 2. Fetch instances
 		try {
 			instances = await getInstances();
+			addDebug(`인스턴스 ${instances.length}개: ${instances.map(i => i.name).join(', ')}`);
 		} catch (err) {
 			appState = 'no-server';
 			connectionError = `인스턴스 조회 실패: ${err instanceof Error ? err.message : ''}`;
+			addDebug(`인스턴스 조회 실패: ${err}`);
 			return;
 		}
 
 		if (instances.length === 0) {
 			appState = 'no-instance';
+			addDebug('연결된 인스턴스 없음');
 			return;
 		}
 
-		// 3. Auto-select if saved instance still exists, or only 1 instance
+		// 3. Show instance list — always let user pick (or confirm)
 		const savedExists = instances.find(i => i.id === settings.selectedInstance);
 		if (savedExists) {
-			appState = 'connected';
-		} else if (instances.length === 1) {
-			settings.selectedInstance = instances[0].id;
 			appState = 'connected';
 		} else {
 			appState = 'select-instance';
 		}
+		addDebug(`상태: ${appState}, 선택: ${settings.selectedInstance}`);
 	}
 
 	function selectInstance(id: string) {
@@ -91,31 +132,48 @@
 	}
 
 	onMount(async () => {
+		try {
 		await checkConnection();
 
-		// Initialize TTS
-		tts = new WebSpeechTTS({
+		// Initialize TTS — native on Android, WebSpeech on desktop
+		const ttsCallbacks = {
 			onStart: () => conversation.setSpeaking(),
 			onEnd: () => {
 				if (conversation.micEnabled) {
-					conversation.setListening();
-					stt?.start();
+					setTimeout(() => {
+						conversation.setListening();
+						if (stt && 'resume' in stt) {
+							(stt as any).resume();
+						} else {
+							stt?.start();
+						}
+					}, 500);
 				} else {
 					conversation.setIdle();
 				}
 			},
 			onSentence: () => {}
-		});
+		};
+
+		if (Capacitor.isNativePlatform()) {
+			tts = new CapacitorTTS(ttsCallbacks);
+			addDebug('TTS: Capacitor (native)');
+		} else {
+			tts = new WebSpeechTTS(ttsCallbacks);
+			addDebug(`TTS: WebSpeech (available: ${(tts as WebSpeechTTS).available})`);
+		}
 
 		// Initialize STT based on platform
 		const sttCallbacks = {
 			onInterim: (text: string) => {
-				conversation.interimText = text;
+				conversation.interimText = finalBuffer ? finalBuffer + ' ' + text : text;
 			},
 			onFinal: (text: string) => {
 				if (text.trim()) {
-					conversation.interimText = '';
-					sendMessage(text.trim());
+					finalBuffer += (finalBuffer ? ' ' : '') + text.trim();
+					conversation.interimText = finalBuffer;
+					if (finalTimer) clearTimeout(finalTimer);
+					finalTimer = setTimeout(flushFinalBuffer, FINAL_DEBOUNCE_MS);
 				}
 			},
 			onError: (err: string) => {
@@ -123,14 +181,42 @@
 				sttError = err;
 				// Don't setIdle here - let it show progress
 			},
-			onEnd: () => {}
+			onEnd: () => {
+				// If mic is still enabled but STT stopped (Android auto-stop), restart
+				if (conversation.micEnabled && !isLoading) {
+					addDebug('STT onEnd — 자동 재시작');
+					setTimeout(() => {
+						if (conversation.micEnabled && !isLoading) {
+							stt?.start();
+						}
+					}, 300);
+				}
+			}
 		};
 
 		if (Capacitor.isNativePlatform()) {
-			stt = new CapacitorSTT(sttCallbacks);
+			// AudioRecord → WebSocket → 서버 VOSK: 마이크 안 꺼짐
+			stt = new VoskSTT(sttCallbacks, settings.serverUrl);
+			addDebug('STT: Server VOSK (AudioRecord streaming — 연속 마이크)');
 		} else {
 			stt = new WebSpeechSTT(sttCallbacks);
 		}
+
+		// Mic guardian — ensure STT is always running when mic is on
+		const micGuardian = setInterval(() => {
+			if (!conversation.micEnabled || isLoading) return;
+			if (conversation.state !== 'speaking' && conversation.state !== 'processing') {
+				// Force state to listening
+				if (conversation.state !== 'listening') {
+					conversation.setListening();
+				}
+				// If STT isn't running, restart it
+				if (stt && !stt.isListening) {
+					addDebug('[Guardian] STT dead — restarting');
+					stt.start();
+				}
+			}
+		}, 2000);
 
 		// Animate waveform
 		const animate = () => {
@@ -150,9 +236,15 @@
 
 		return () => {
 			cancelAnimationFrame(animFrame);
+			clearInterval(micGuardian);
 			stt?.stop();
 			tts?.stop();
 		};
+		} catch (e) {
+			addDebug(`onMount 에러: ${e}`);
+			appState = 'no-server';
+			connectionError = `초기화 에러: ${e}`;
+		}
 	});
 
 	async function toggleMic() {
@@ -177,15 +269,21 @@
 		const finalText = text || input.trim();
 		if (!finalText || isLoading) return;
 
+		// Track input method: voice (text param) vs keyboard (no text param)
+		const isVoiceInput = !!text;
+
 		if (conversation.state === 'speaking') {
 			tts?.stop();
 		}
 
-		stt?.stop();
+		// Pause STT during processing (keep mic logically on) — will resume after response
+		if (isVoiceInput && stt && 'pause' in stt) {
+			(stt as any).pause();
+		}
 		conversation.setProcessing();
 
 		messages.push({ role: 'user', content: finalText });
-		if (!text) input = '';
+		if (!isVoiceInput) input = '';
 		isLoading = true;
 
 		messages.push({ role: 'assistant', content: '' });
@@ -205,17 +303,16 @@
 							messages[assistantIdx].content = fullResponse;
 							scrollToBottom();
 
-							if (conversation.micEnabled) {
-								sentenceBuffer += delta;
-								const sentenceEnd = sentenceBuffer.match(/[.!?。\n]/);
-								if (sentenceEnd && sentenceBuffer.trim().length > 5) {
-									tts?.addChunk(sentenceBuffer.trim());
-									sentenceBuffer = '';
-								}
+							// Always TTS output
+							sentenceBuffer += delta;
+							const sentenceEnd = sentenceBuffer.match(/[.!?。\n]/);
+							if (sentenceEnd && sentenceBuffer.trim().length > 5) {
+								tts?.addChunk(sentenceBuffer.trim());
+								sentenceBuffer = '';
 							}
 						},
 						onDone: () => {
-							if (sentenceBuffer.trim() && conversation.micEnabled) {
+							if (sentenceBuffer.trim()) {
 								tts?.addChunk(sentenceBuffer.trim());
 							}
 							resolve();
@@ -229,11 +326,22 @@
 		} finally {
 			isLoading = false;
 
-			if (!conversation.micEnabled) {
-				conversation.setIdle();
-			} else if (!tts?.isSpeaking) {
+			// Always restart/resume STT if mic is on — never leave mic off
+			if (conversation.micEnabled) {
 				conversation.setListening();
-				stt?.start();
+				try {
+					if (stt && 'resume' in stt) {
+						await (stt as any).resume();
+						addDebug('STT resume 완료');
+					} else {
+						await stt?.start();
+						addDebug('STT 재시작 완료');
+					}
+				} catch (e) {
+					addDebug(`STT 재시작 실패: ${e}`);
+				}
+			} else {
+				conversation.setIdle();
 			}
 			scrollToBottom();
 		}
@@ -274,6 +382,9 @@
 			🔄 재시도
 		</button>
 	</div>
+	{#if debugLog}
+		<pre class="mt-4 text-xs text-gray-500 bg-gray-900 rounded-lg p-3 max-w-sm overflow-auto max-h-40 text-left">{debugLog}</pre>
+	{/if}
 </div>
 
 {:else if appState === 'no-instance'}
@@ -299,40 +410,53 @@
 </div>
 
 {:else if appState === 'select-instance'}
-<!-- Multiple instances available -->
+<!-- Instance list with name editing -->
 <div class="app-container bg-gray-950 text-white">
 	<header class="flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<span class="text-xl">🦖</span>
-		<span class="font-semibold text-lg">인스턴스 선택</span>
-	</header>
-	<div class="flex-1 overflow-y-auto px-4 py-6 space-y-3">
-		<p class="text-gray-400 text-sm mb-4">대화할 OpenClaw 인스턴스를 선택하세요</p>
-		{#each instances as inst}
-			<button
-				onclick={() => selectInstance(inst.id)}
-				class="w-full flex items-center gap-4 p-4 bg-gray-900 hover:bg-gray-800 rounded-xl transition-colors text-left"
-			>
-				<span class="text-3xl">🖥️</span>
-				<div class="flex-1">
-					<p class="font-medium text-white">{inst.name}</p>
-					<p class="text-sm text-gray-400">{inst.status} · {new Date(inst.connectedAt).toLocaleString('ko-KR')}</p>
-				</div>
-				<span class="text-2xl text-gray-500">→</span>
-			</button>
-		{/each}
-	</div>
-	<div class="px-4 pb-6 flex gap-3">
-		<button
-			onclick={checkConnection}
-			class="flex-1 px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium transition-colors"
-		>
-			🔄 새로고침
-		</button>
+		<span class="font-semibold text-lg">컴퓨터 선택</span>
 		<button
 			onclick={() => goto('/settings')}
-			class="px-4 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl transition-colors"
+			class="ml-auto p-2 rounded-lg hover:bg-gray-800 transition-colors"
 		>
 			⚙️
+		</button>
+	</header>
+	<div class="flex-1 overflow-y-auto px-4 py-6 space-y-3">
+		<p class="text-gray-400 text-sm mb-4">대화할 컴퓨터를 선택하세요. 이름을 탭하면 편집할 수 있습니다.</p>
+		{#each instances as inst}
+			{@const customName = settings.getInstanceName(inst.id, inst.name)}
+			<div class="bg-gray-900 rounded-xl p-4 space-y-3">
+				<div class="flex items-center gap-3">
+					<span class="text-3xl">🖥️</span>
+					<div class="flex-1">
+						<input
+							type="text"
+							value={customName}
+							onchange={(e) => settings.setInstanceName(inst.id, (e.target as HTMLInputElement).value || inst.name)}
+							class="bg-transparent text-white font-medium text-lg border-b border-transparent focus:border-blue-500 outline-none w-full"
+							placeholder={inst.name}
+						/>
+						<p class="text-sm text-gray-400 mt-1">
+							{inst.name} · {inst.status} · {new Date(inst.connectedAt).toLocaleString('ko-KR')}
+						</p>
+					</div>
+				</div>
+				<button
+					onclick={() => selectInstance(inst.id)}
+					class="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors"
+				>
+					연결하기
+				</button>
+			</div>
+		{/each}
+	</div>
+	<div class="px-4 pb-6">
+		<button
+			onclick={checkConnection}
+			class="w-full px-4 py-3 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium transition-colors"
+		>
+			🔄 새로고침
 		</button>
 	</div>
 </div>
@@ -346,9 +470,9 @@
 			<button
 				onclick={() => { appState = 'select-instance'; }}
 				class="text-xl hover:scale-110 transition-transform"
-				title="인스턴스 변경"
+				title="컴퓨터 변경"
 			>🦖</button>
-			<span class="font-semibold text-lg">렉스</span>
+			<span class="font-semibold text-lg">{settings.getInstanceName(settings.selectedInstance, '렉스')}</span>
 			<span
 				class="text-xs px-2 py-0.5 rounded-full"
 				style="background-color: {conversation.stateColor}20; color: {conversation.stateColor}"

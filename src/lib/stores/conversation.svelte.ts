@@ -1,7 +1,7 @@
 /**
  * Conversation state machine
- * idle → listening → processing → speaking → idle
- * Barge-in: speaking → listening (interrupts TTS)
+ * idle → listening → processing → speaking → listening (when mic on)
+ * When micEnabled: state NEVER goes to idle
  */
 
 export type ConversationState = 'idle' | 'listening' | 'processing' | 'speaking';
@@ -48,8 +48,13 @@ class ConversationStore {
 		this.state = 'speaking';
 	}
 	setIdle() {
-		this.state = 'idle';
-		this.interimText = '';
+		// If mic is on, go to listening instead of idle
+		if (this.micEnabled) {
+			this.state = 'listening';
+		} else {
+			this.state = 'idle';
+			this.interimText = '';
+		}
 	}
 }
 
