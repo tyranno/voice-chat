@@ -5,7 +5,9 @@
 	import { streamChat } from '$lib/api/openclaw';
 	import { checkServerHealth } from '$lib/api/health';
 	import { getInstances, type Instance } from '$lib/api/instances';
-	import { createSTT, type STTEngine } from '$lib/stt';
+	import { WebSpeechSTT } from '$lib/stt/webspeech';
+	import { CapacitorSTT } from '$lib/stt/capacitor';
+	import { Capacitor } from '@capacitor/core';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { onMount } from 'svelte';
 
@@ -25,10 +27,12 @@
 	let connectionError = $state('');
 	let instances = $state<Instance[]>([]);
 
-	let stt: STTEngine | null = $state(null);
+	let stt: WebSpeechSTT | CapacitorSTT | null = $state(null);
 	let tts: WebSpeechTTS | null = $state(null);
 	let waveformBars: number[] = $state(Array(24).fill(4));
 	let animFrame = 0;
+	let sttError = $state('');
+	let debugInfo = $state('');
 
 	function scrollToBottom() {
 		if (messagesContainer) {
@@ -88,6 +92,11 @@
 	}
 
 	onMount(async () => {
+		// Debug info
+		const isNative = Capacitor.isNativePlatform();
+		const platform = Capacitor.getPlatform();
+		debugInfo = `Platform: ${platform}, Native: ${isNative}`;
+		
 		await checkConnection();
 
 		// Initialize TTS
@@ -104,22 +113,37 @@
 			onSentence: () => {}
 		});
 
-		// Initialize STT (native on Android, Web Speech on browser)
-		stt = createSTT({
-			onInterim: (text) => {
+		// Initialize STT based on platform
+		const sttCallbacks = {
+			onInterim: (text: string) => {
 				conversation.interimText = text;
 			},
-			onFinal: (text) => {
+			onFinal: (text: string) => {
 				if (text.trim()) {
 					conversation.interimText = '';
 					sendMessage(text.trim());
 				}
 			},
-			onError: (err) => {
+			onError: (err: string) => {
 				console.error('STT error:', err);
+				sttError = err;
+				// Don't setIdle here - let it show progress
 			},
 			onEnd: () => {}
-		});
+		};
+
+		if (Capacitor.isNativePlatform()) {
+			debugInfo += ' | STT: Capacitor';
+			try {
+				stt = new CapacitorSTT(sttCallbacks);
+				debugInfo += ' (created)';
+			} catch (e) {
+				debugInfo += ` (error: ${e})`;
+			}
+		} else {
+			debugInfo += ' | STT: WebSpeech';
+			stt = new WebSpeechSTT(sttCallbacks);
+		}
 
 		// Animate waveform
 		const animate = () => {
@@ -144,11 +168,18 @@
 		};
 	});
 
-	function toggleMic() {
+	async function toggleMic() {
 		conversation.micEnabled = !conversation.micEnabled;
+		sttError = ''; // Clear previous error
 		if (conversation.micEnabled) {
 			conversation.setListening();
-			stt?.start();
+			debugInfo += ' | 마이크 시작...';
+			try {
+				await stt?.start();
+			} catch (e) {
+				sttError = `start() 에러: ${e}`;
+				conversation.setIdle();
+			}
 		} else {
 			stt?.stop();
 			tts?.stop();
@@ -232,14 +263,14 @@
 
 {#if appState === 'checking'}
 <!-- Splash / Connection Check -->
-<div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-4">
+<div class="app-container bg-gray-950 text-white items-center justify-center gap-4">
 	<span class="text-6xl animate-pulse">🦖</span>
 	<p class="text-gray-400">서버 연결 중...</p>
 </div>
 
 {:else if appState === 'no-server'}
 <!-- Server unreachable or not configured -->
-<div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-6 px-8">
+<div class="app-container bg-gray-950 text-white items-center justify-center gap-6 px-8">
 	<span class="text-6xl">🦖</span>
 	<p class="text-xl font-semibold">서버에 연결할 수 없습니다</p>
 	<p class="text-gray-400 text-center text-sm">{connectionError || settings.serverUrl}</p>
@@ -261,7 +292,7 @@
 
 {:else if appState === 'no-instance'}
 <!-- Server OK but no bridges connected -->
-<div class="flex flex-col h-screen bg-gray-950 text-white items-center justify-center gap-6 px-8">
+<div class="app-container bg-gray-950 text-white items-center justify-center gap-6 px-8">
 	<span class="text-6xl">🦖</span>
 	<p class="text-xl font-semibold">연결된 인스턴스 없음</p>
 	<p class="text-gray-400 text-center text-sm">서버에 연결되었지만, OpenClaw 인스턴스가 없습니다.<br/>ClawBridge를 실행해주세요.</p>
@@ -283,7 +314,7 @@
 
 {:else if appState === 'select-instance'}
 <!-- Multiple instances available -->
-<div class="flex flex-col h-screen bg-gray-950 text-white">
+<div class="app-container bg-gray-950 text-white">
 	<header class="flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<span class="text-xl">🦖</span>
 		<span class="font-semibold text-lg">인스턴스 선택</span>
@@ -322,9 +353,9 @@
 
 {:else}
 <!-- Connected — Chat UI -->
-<div class="flex flex-col h-screen bg-gray-950 text-white">
+<div class="app-container bg-gray-950 text-white">
 	<!-- Header -->
-	<header class="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
+	<header class="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<div class="flex items-center gap-2">
 			<button
 				onclick={() => { appState = 'select-instance'; }}
@@ -386,6 +417,19 @@
 
 	<!-- Waveform + Interim -->
 	<div class="px-4 py-2 space-y-2">
+		{#if debugInfo}
+			<div class="text-center text-xs text-yellow-400 bg-yellow-900/30 rounded-lg px-2 py-1">
+				🔧 {debugInfo}
+			</div>
+		{/if}
+		
+		{#if sttError}
+			<div class="text-center text-sm text-red-400 bg-red-900/30 rounded-lg px-3 py-2">
+				⚠️ {sttError}
+				<button onclick={() => sttError = ''} class="ml-2 text-red-300 hover:text-white">✕</button>
+			</div>
+		{/if}
+		
 		{#if conversation.interimText}
 			<div class="text-center text-sm text-gray-400 italic truncate">
 				"{conversation.interimText}"
@@ -406,7 +450,7 @@
 			</div>
 		</div>
 
-		<div class="flex justify-center">
+		<div class="flex justify-center pb-4">
 			<button
 				onclick={toggleMic}
 				class="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all duration-300 {conversation.micEnabled

@@ -5,7 +5,11 @@ const config: CapacitorConfig = {
 	appName: 'VoiceChat',
 	webDir: 'build',
 	server: {
-		androidScheme: 'https'
+		androidScheme: 'https',
+		cleartext: true
+	},
+	android: {
+		allowMixedContent: true
 	}
 };
 
