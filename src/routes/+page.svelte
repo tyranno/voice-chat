@@ -11,11 +11,21 @@
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { CapacitorTTS } from '$lib/tts/capacitor';
 	import { onMount } from 'svelte';
+	import { extractFileUrls, downloadFile } from '$lib/api/downloader';
 	// SpeechRecognition imported dynamically in checkConnection to avoid SSR issues
+
+	interface DownloadInfo {
+		url: string;
+		filename: string;
+		status: 'idle' | 'downloading' | 'complete' | 'error';
+		progress: number;
+		error?: string;
+	}
 
 	interface Message {
 		role: 'user' | 'assistant';
 		content: string;
+		downloads?: DownloadInfo[];
 	}
 
 	let messages: Message[] = $state([]);
@@ -363,6 +373,15 @@
 							if (sentenceBuffer.trim()) {
 								tts?.addChunk(sentenceBuffer.trim());
 							}
+							// Extract file URLs for download buttons
+							const fileUrls = extractFileUrls(fullResponse);
+							if (fileUrls.length > 0) {
+								messages[assistantIdx].downloads = fileUrls.map(f => ({
+									...f,
+									status: 'idle' as const,
+									progress: 0
+								}));
+							}
 							resolve();
 						},
 						onError: (err) => reject(err)
@@ -402,6 +421,24 @@
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
 			sendMessage();
+		}
+	}
+
+	async function handleDownload(dl: DownloadInfo) {
+		if (dl.status === 'downloading') return;
+		dl.status = 'downloading';
+		dl.progress = 0;
+
+		const result = await downloadFile(dl.url, dl.filename, (percent) => {
+			dl.progress = percent;
+		});
+
+		if (result.success) {
+			dl.status = 'complete';
+			dl.progress = 100;
+		} else {
+			dl.status = 'error';
+			dl.error = result.error || 'Download failed';
 		}
 	}
 </script>
@@ -573,6 +610,30 @@
 						</span>
 					{:else}
 						<p class="whitespace-pre-wrap">{message.content}</p>
+						{#if message.downloads && message.downloads.length > 0}
+							<div class="mt-2 space-y-1.5 border-t border-gray-700 pt-2">
+								{#each message.downloads as dl}
+									<button
+										onclick={() => handleDownload(dl)}
+										disabled={dl.status === 'downloading'}
+										class="flex items-center gap-2 w-full text-left px-3 py-2 rounded-lg bg-gray-700/50 hover:bg-gray-600/50 transition-colors text-sm disabled:opacity-70"
+									>
+										<span class="flex-shrink-0">
+											{#if dl.status === 'complete'}✅
+											{:else if dl.status === 'error'}❌
+											{:else if dl.status === 'downloading'}⏳
+											{:else}📥{/if}
+										</span>
+										<span class="flex-1 truncate">{dl.filename}</span>
+										{#if dl.status === 'downloading'}
+											<span class="text-xs text-blue-400">{dl.progress}%</span>
+										{:else if dl.status === 'error'}
+											<span class="text-xs text-red-400">{dl.error}</span>
+										{/if}
+									</button>
+								{/each}
+							</div>
+						{/if}
 					{/if}
 				</div>
 			</div>
