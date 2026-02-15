@@ -14,31 +14,21 @@ interface StreamCallbacks {
 	onError: (error: Error) => void;
 }
 
-const MAX_RETRIES = 3;
-const RETRY_BASE_MS = 1000;
-
-async function fetchWithRetry(url: string, init: RequestInit, retries = MAX_RETRIES): Promise<Response> {
-	for (let attempt = 0; attempt <= retries; attempt++) {
-		try {
-			const controller = new AbortController();
-			const timeout = setTimeout(() => controller.abort(), 30000);
-			const res = await fetch(url, { ...init, signal: controller.signal });
-			clearTimeout(timeout);
-			return res;
-		} catch (err) {
-			if (attempt === retries) throw err;
-			const delay = RETRY_BASE_MS * Math.pow(2, attempt);
-			console.log(`[VoiceChat] 재시도 ${attempt + 1}/${retries} (${delay}ms 후)`);
-			await new Promise(r => setTimeout(r, delay));
-		}
+async function fetchOnce(url: string, init: RequestInit): Promise<Response> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 15000);
+	try {
+		const res = await fetch(url, { ...init, signal: controller.signal });
+		return res;
+	} finally {
+		clearTimeout(timeout);
 	}
-	throw new Error('unreachable');
 }
 
 export async function streamChat(messages: Message[], callbacks: StreamCallbacks): Promise<void> {
 	let response: Response;
 	try {
-		response = await fetchWithRetry(settings.chatEndpoint, {
+		response = await fetchOnce(settings.chatEndpoint, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json'
@@ -49,12 +39,25 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 			})
 		});
 	} catch (err) {
-		callbacks.onError(new Error(`연결 실패: ${settings.serverUrl} 에 접속할 수 없습니다 (${MAX_RETRIES}회 재시도 후)`));
+		callbacks.onError(new Error(`연결 실패: ${settings.serverUrl}`));
 		return;
 	}
 
 	if (!response.ok) {
 		const errText = await response.text().catch(() => '');
+		if (response.status === 404 && errText.includes('Instance not found')) {
+			// Instance ID changed — try to auto-recover
+			try {
+				const { getInstances } = await import('./instances');
+				const instances = await getInstances();
+				if (instances.length > 0) {
+					settings.selectedInstance = instances[0].id;
+					console.log(`[VoiceChat] Instance auto-recovered: ${instances[0].id}`);
+					// Retry with new instance
+					return streamChat(messages, callbacks);
+				}
+			} catch {}
+		}
 		callbacks.onError(new Error(`서버 오류 ${response.status}: ${errText}`));
 		return;
 	}

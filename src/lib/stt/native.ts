@@ -43,9 +43,11 @@ export class NativeSTT {
 	private _paused = false;
 	private _started = false;  // start()~stop() 사이
 	private listenerHandle: PluginListenerHandle | null = null;
+	private serverUrl: string;
 
-	constructor(callbacks: NativeSTTCallbacks) {
+	constructor(callbacks: NativeSTTCallbacks, serverUrl?: string) {
 		this.callbacks = callbacks;
+		this.serverUrl = serverUrl || '';
 	}
 
 	get isListening() { return this._isListening; }
@@ -68,7 +70,10 @@ export class NativeSTT {
 					console.log(`[NativeSTT] sttResult: type=${data.type} text=${data.text}`);
 
 					if (data.type === 'partial') {
-						this.callbacks.onInterim(data.text);
+						// 서버 placeholder "인식 중..." 필터링
+						if (data.text && data.text !== '인식 중...') {
+							this.callbacks.onInterim(data.text);
+						}
 					} else if (data.type === 'final') {
 						this._isListening = true;  // Java가 인식에 성공 = 활성 상태
 						this.callbacks.onFinal(data.text);
@@ -79,7 +84,7 @@ export class NativeSTT {
 				console.log('[NativeSTT] Listener registered');
 			}
 
-			await NativeStt.start();
+			await NativeStt.start({ serverUrl: this.serverUrl });
 			this._isListening = true;
 			console.log('[NativeSTT] Started');
 		} catch (e) {

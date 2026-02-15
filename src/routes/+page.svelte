@@ -10,6 +10,7 @@
 	import { Capacitor } from '@capacitor/core';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { CapacitorTTS } from '$lib/tts/capacitor';
+	import { CloudTTS } from '$lib/tts/cloud';
 	import { onMount } from 'svelte';
 	import { extractFileUrls, downloadFile } from '$lib/api/downloader';
 	// SpeechRecognition imported dynamically in checkConnection to avoid SSR issues
@@ -40,20 +41,35 @@
 	let instances = $state<Instance[]>([]);
 
 	let stt: WebSpeechSTT | NativeSTT | null = $state(null);
-	let tts: WebSpeechTTS | CapacitorTTS | null = $state(null);
+	let tts: WebSpeechTTS | CapacitorTTS | CloudTTS | null = $state(null);
 	let waveformBars: number[] = $state(Array(24).fill(4));
 	let animFrame = 0;
 	let sttError = $state('');
 	let debugLog = $state('');
 	let finalBuffer = '';
 	let finalTimer: ReturnType<typeof setTimeout> | null = null;
-	const FINAL_DEBOUNCE_MS = 500;
+	const FINAL_DEBOUNCE_MS = 200;
+
+	let pendingMessage = '';
 
 	function flushFinalBuffer() {
 		if (finalBuffer.trim()) {
 			const text = finalBuffer.trim();
 			finalBuffer = '';
 			conversation.interimText = '';
+
+			// Barge-in: TTS 재생 중이면 즉시 중지 + STT 재개
+			if (tts && (tts as any)._speaking) {
+				addDebug(`🔇 Barge-in: TTS 중지, 새 명령: "${text}"`);
+				tts.stop();
+				// stop()이 onEnd 콜백을 호출하여 STT resume됨
+			}
+
+			if (isLoading) {
+				pendingMessage = text;
+				addDebug(`📋 큐잉: "${text}" (응답 대기 중)`);
+				return;
+			}
 			sendMessage(text);
 		}
 	}
@@ -137,27 +153,24 @@
 		addDebug(`Platform: ${Capacitor.getPlatform()}`);
 		await checkConnection();
 
-		// Initialize TTS — native on Android, WebSpeech on desktop
+		// Initialize TTS — Cloud TTS on Android, WebSpeech on desktop
 		const ttsCallbacks = {
 			onStart: () => {
 				conversation.setSpeaking();
-				// STT 완전 중지 (recognizer stop) — 피드백 루프 방지
+				// 에코 방지: TTS 재생 중 STT 일시정지
 				if (stt instanceof NativeSTT) {
+					addDebug('🔇 TTS 시작 → STT 일시정지 (에코 방지)');
 					stt.pause();
-				} else if (stt) {
-					stt.stop();
 				}
 			},
 			onEnd: () => {
+				// TTS 끝나면 STT 재개
+				if (stt instanceof NativeSTT && conversation.micEnabled) {
+					addDebug('🔊 TTS 끝 → STT 재개');
+					stt.resume();
+				}
 				if (conversation.micEnabled) {
-					setTimeout(async () => {
-						conversation.setListening();
-						if (stt instanceof NativeSTT) {
-							await stt.resume();
-						} else {
-							await stt?.start();
-						}
-					}, 500);
+					conversation.setListening();
 				} else {
 					conversation.setIdle();
 				}
@@ -165,9 +178,9 @@
 			onSentence: () => {}
 		};
 
-		if (Capacitor.isNativePlatform() || settings.ttsEngine === 'native') {
-			tts = new CapacitorTTS(ttsCallbacks);
-			addDebug('TTS: Capacitor (native — Samsung/Google TTS)');
+		if (Capacitor.isNativePlatform()) {
+			tts = new CloudTTS(ttsCallbacks, settings.serverUrl);
+			addDebug('TTS: Cloud TTS (Google Neural2)');
 		} else {
 			tts = new WebSpeechTTS(ttsCallbacks);
 			addDebug(`TTS: WebSpeech (available: ${(tts as WebSpeechTTS).available})`);
@@ -205,9 +218,8 @@
 		};
 
 		if (Capacitor.isNativePlatform()) {
-			// Android 내장 SpeechRecognizer — 자동 재시작, 고품질 인식
-			stt = new NativeSTT(sttCallbacks);
-			addDebug('STT: Android SpeechRecognizer (네이티브, 자동 재시작)');
+			stt = new NativeSTT(sttCallbacks, settings.serverUrl);
+			addDebug('STT: Server STT (WebSocket → Vosk)');
 		} else {
 			stt = new WebSpeechSTT(sttCallbacks);
 		}
@@ -327,7 +339,11 @@
 
 	async function sendMessage(text?: string) {
 		const finalText = text || input.trim();
-		if (!finalText || isLoading) return;
+		if (!finalText || isLoading) {
+			addDebug(`sendMessage 스킵: text="${text}" isLoading=${isLoading}`);
+			return;
+		}
+		addDebug(`📤 sendMessage: "${finalText}"`);
 
 		// Track input method: voice (text param) vs keyboard (no text param)
 		const isVoiceInput = !!text;
@@ -360,17 +376,20 @@
 							fullResponse += delta;
 							messages[assistantIdx].content = fullResponse;
 							scrollToBottom();
+							if (fullResponse.length <= 30) addDebug(`📥 delta: "${delta}"`);
 
-							// Always TTS output
+							// TTS: 문장 단위로 즉시 재생 (쉼표도 끊기)
 							sentenceBuffer += delta;
-							const sentenceEnd = sentenceBuffer.match(/[.!?。\n]/);
-							if (sentenceEnd && sentenceBuffer.trim().length > 5) {
+							const sentenceEnd = sentenceBuffer.match(/[.!?,。\n]/);
+							if (sentenceEnd && sentenceBuffer.trim().length > 3) {
 								tts?.addChunk(sentenceBuffer.trim());
 								sentenceBuffer = '';
 							}
 						},
 						onDone: () => {
+							addDebug(`✅ 응답완료: ${fullResponse.length}자`);
 							if (sentenceBuffer.trim()) {
+								addDebug(`🔊 TTS: "${sentenceBuffer.trim().substring(0, 30)}"`);
 								tts?.addChunk(sentenceBuffer.trim());
 							}
 							// Extract file URLs for download buttons
@@ -384,7 +403,7 @@
 							}
 							resolve();
 						},
-						onError: (err) => reject(err)
+						onError: (err) => { addDebug(`❌ API에러: ${err}`); reject(err); }
 					}
 				);
 			});
@@ -393,25 +412,20 @@
 		} finally {
 			isLoading = false;
 
-			// STT resume is handled by TTS onEnd callback
-			// Do NOT resume here — TTS may still be speaking and mic would pick it up
+			// Vosk는 항상 듣고 있으므로 resume 불필요
+			// TTS가 끝나면 onEnd 콜백에서 상태 변경
 			if (!conversation.micEnabled) {
 				conversation.setIdle();
-			}
-			// If mic is on but TTS is playing, stay muted until TTS finishes (onEnd will resume)
-			// If mic is on and no TTS, resume now
-			if (conversation.micEnabled && (!tts || !(tts as any)._speaking)) {
+			} else if (!tts || !(tts as any)._speaking) {
 				conversation.setListening();
-				try {
-					if (stt instanceof NativeSTT) {
-						await stt.resume();
-					} else if (stt) {
-						await stt.start();
-					}
-					addDebug('STT 재개 완료 (no TTS)');
-				} catch (e) {
-					addDebug(`STT 재개 실패: ${e}`);
-				}
+			}
+
+			// 대기 중인 메시지 전송
+			if (pendingMessage) {
+				const queued = pendingMessage;
+				pendingMessage = '';
+				addDebug(`📋 큐잉된 메시지 전송: "${queued}"`);
+				setTimeout(() => sendMessage(queued), 200);
 			}
 			scrollToBottom();
 		}
