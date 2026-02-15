@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2732 2732">
+  <!-- Dark background -->
+  <rect width="2732" height="2732" fill="#030712"/>
+  <!-- Subtle radial glow -->
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="45%" r="30%">
+      <stop offset="0%" style="stop-color:#1e3a5f;stop-opacity:0.4"/>
+      <stop offset="100%" style="stop-color:#030712;stop-opacity:0"/>
+    </radialGradient>
+  </defs>
+  <rect width="2732" height="2732" fill="url(#glow)"/>
+  <!-- Dinosaur icon (centered, blue accent) -->
+  <g transform="translate(1366, 1200) scale(2.2)">
+    <!-- Circular icon background -->
+    <circle cx="0" cy="0" r="220" fill="#2563eb" opacity="0.15"/>
+    <!-- Dino body -->
+    <g fill="#2563eb">
+      <ellipse cx="0" cy="40" rx="100" ry="120"/>
+      <!-- Tail -->
+      <path d="M-70,90 Q-150,70 -200,130 Q-210,140 -200,135 Q-130,90 -65,100Z"/>
+      <!-- Neck -->
+      <path d="M45,-55 Q60,-115 45,-160 Q30,-190 60,-190 Q100,-175 85,-115 Q80,-70 65,-40Z"/>
+      <!-- Head -->
+      <ellipse cx="75" cy="-190" rx="65" ry="45"/>
+      <!-- Jaw -->
+      <path d="M85,-165 Q130,-165 145,-175 Q150,-180 145,-190 Q130,-185 85,-180Z"/>
+      <!-- Eye -->
+      <circle cx="95" cy="-200" r="10" fill="#030712"/>
+      <circle cx="97" cy="-202" r="4" fill="#1e40af"/>
+      <!-- Tiny arms -->
+      <path d="M65,-15 Q95,-30 100,-15 Q97,-8 85,-8 Q72,0 65,-8Z"/>
+      <!-- Legs -->
+      <path d="M-30,130 Q-35,190 -45,230 Q-50,245 -30,245 Q-15,245 -8,230 Q0,215 -8,190 Q-15,145 -15,130Z"/>
+      <path d="M45,130 Q40,190 30,230 Q25,245 45,245 Q60,245 65,230 Q70,215 65,190 Q58,145 58,130Z"/>
+      <!-- Spikes -->
+      <path d="M-40,-40 L-55,-70 L-35,-48 L-48,-80 L-25,-55 L-38,-85 L-12,-55" opacity="0.7"/>
+    </g>
+  </g>
+  <!-- App name -->
+  <text x="1366" y="1750" text-anchor="middle" font-family="Arial, sans-serif" font-size="80" font-weight="bold" fill="white" opacity="0.9">VoiceChat</text>
+  <text x="1366" y="1830" text-anchor="middle" font-family="Arial, sans-serif" font-size="40" fill="#9ca3af">렉스 🦖 AI 음성 비서</text>
+</svg>

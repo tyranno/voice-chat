@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb"/>
+      <stop offset="100%" style="stop-color:#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+  <!-- Dinosaur silhouette (T-Rex style, white) -->
+  <g transform="translate(512, 520) scale(1.0)" fill="white">
+    <!-- Body -->
+    <ellipse cx="0" cy="40" rx="140" ry="170"/>
+    <!-- Tail -->
+    <path d="M-100,120 Q-200,100 -280,180 Q-300,200 -280,190 Q-180,130 -90,140Z"/>
+    <!-- Neck -->
+    <path d="M60,-80 Q80,-160 60,-220 Q40,-260 80,-260 Q140,-240 120,-160 Q110,-100 90,-60Z"/>
+    <!-- Head -->
+    <ellipse cx="100" cy="-260" rx="90" ry="60"/>
+    <!-- Jaw -->
+    <path d="M120,-230 Q180,-230 200,-240 Q210,-250 200,-260 Q180,-255 120,-250Z"/>
+    <!-- Eye -->
+    <circle cx="130" cy="-275" r="14" fill="#2563eb"/>
+    <circle cx="133" cy="-278" r="6" fill="#1d4ed8"/>
+    <!-- Tiny arms -->
+    <path d="M90,-20 Q130,-40 140,-20 Q135,-10 120,-10 Q100,0 90,-10Z"/>
+    <!-- Left leg -->
+    <path d="M-40,180 Q-50,260 -60,320 Q-70,340 -40,340 Q-20,340 -10,320 Q0,300 -10,260 Q-20,200 -20,180Z"/>
+    <!-- Right leg -->
+    <path d="M60,180 Q50,260 40,320 Q30,340 60,340 Q80,340 90,320 Q100,300 90,260 Q80,200 80,180Z"/>
+    <!-- Teeth -->
+    <path d="M50,-228 L55,-218 L60,-228 L65,-218 L70,-228 L75,-218 L80,-228" fill="none" stroke="white" stroke-width="3"/>
+    <!-- Spikes on back -->
+    <path d="M-60,-60 L-80,-100 L-50,-70 L-70,-110 L-40,-80 L-55,-120 L-20,-80" fill="white" opacity="0.8"/>
+  </g>
+</svg>
