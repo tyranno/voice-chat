@@ -6,8 +6,7 @@
 	import { checkServerHealth } from '$lib/api/health';
 	import { getInstances, type Instance } from '$lib/api/instances';
 	import { WebSpeechSTT } from '$lib/stt/webspeech';
-	import { CapacitorSTT } from '$lib/stt/capacitor';
-	import { VoskSTT } from '$lib/stt/vosk';
+	import { NativeSTT } from '$lib/stt/native';
 	import { Capacitor } from '@capacitor/core';
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { CapacitorTTS } from '$lib/tts/capacitor';
@@ -30,7 +29,7 @@
 	let connectionError = $state('');
 	let instances = $state<Instance[]>([]);
 
-	let stt: WebSpeechSTT | CapacitorSTT | VoskSTT | null = $state(null);
+	let stt: WebSpeechSTT | NativeSTT | null = $state(null);
 	let tts: WebSpeechTTS | CapacitorTTS | null = $state(null);
 	let waveformBars: number[] = $state(Array(24).fill(4));
 	let animFrame = 0;
@@ -38,7 +37,7 @@
 	let debugLog = $state('');
 	let finalBuffer = '';
 	let finalTimer: ReturnType<typeof setTimeout> | null = null;
-	const FINAL_DEBOUNCE_MS = 2500;
+	const FINAL_DEBOUNCE_MS = 500;
 
 	function flushFinalBuffer() {
 		if (finalBuffer.trim()) {
@@ -73,21 +72,6 @@
 			connectionError = '서버 주소를 설정해주세요';
 			addDebug('서버 URL 미설정');
 			return;
-		}
-
-		// 0. Request mic permission early (Android)
-		if (Capacitor.isNativePlatform()) {
-			try {
-				const { SpeechRecognition } = await import('@capgo/capacitor-speech-recognition');
-				const perm = await SpeechRecognition.checkPermissions();
-				addDebug(`마이크 권한: ${perm.speechRecognition}`);
-				if (perm.speechRecognition !== 'granted') {
-					const result = await SpeechRecognition.requestPermissions();
-					addDebug(`권한 요청 결과: ${result.speechRecognition}`);
-				}
-			} catch (e) {
-				addDebug(`권한 요청 에러: ${e}`);
-			}
 		}
 
 		// 1. Health check
@@ -129,23 +113,39 @@
 	function selectInstance(id: string) {
 		settings.selectedInstance = id;
 		appState = 'connected';
+		// 인스턴스 선택 즉시 마이크 자동 ON
+		if (stt && Capacitor.isNativePlatform()) {
+			conversation.micEnabled = true;
+			conversation.setListening();
+			addDebug('[VoiceChat] 마이크 자동 시작');
+			stt.start().catch((e: any) => console.warn('[VoiceChat] Auto-mic failed:', e));
+		}
 	}
 
 	onMount(async () => {
 		try {
+		addDebug(`Platform: ${Capacitor.getPlatform()}`);
 		await checkConnection();
 
 		// Initialize TTS — native on Android, WebSpeech on desktop
 		const ttsCallbacks = {
-			onStart: () => conversation.setSpeaking(),
+			onStart: () => {
+				conversation.setSpeaking();
+				// STT 완전 중지 (recognizer stop) — 피드백 루프 방지
+				if (stt instanceof NativeSTT) {
+					stt.pause();
+				} else if (stt) {
+					stt.stop();
+				}
+			},
 			onEnd: () => {
 				if (conversation.micEnabled) {
-					setTimeout(() => {
+					setTimeout(async () => {
 						conversation.setListening();
-						if (stt && 'resume' in stt) {
-							(stt as any).resume();
+						if (stt instanceof NativeSTT) {
+							await stt.resume();
 						} else {
-							stt?.start();
+							await stt?.start();
 						}
 					}, 500);
 				} else {
@@ -155,9 +155,9 @@
 			onSentence: () => {}
 		};
 
-		if (Capacitor.isNativePlatform()) {
+		if (Capacitor.isNativePlatform() || settings.ttsEngine === 'native') {
 			tts = new CapacitorTTS(ttsCallbacks);
-			addDebug('TTS: Capacitor (native)');
+			addDebug('TTS: Capacitor (native — Samsung/Google TTS)');
 		} else {
 			tts = new WebSpeechTTS(ttsCallbacks);
 			addDebug(`TTS: WebSpeech (available: ${(tts as WebSpeechTTS).available})`);
@@ -182,9 +182,9 @@
 				// Don't setIdle here - let it show progress
 			},
 			onEnd: () => {
-				// If mic is still enabled but STT stopped (Android auto-stop), restart
-				if (conversation.micEnabled && !isLoading) {
-					addDebug('STT onEnd — 자동 재시작');
+				// NativeSTT는 자체 auto-restart — WebSpeech만 여기서 재시작
+				if (conversation.micEnabled && !isLoading && stt instanceof WebSpeechSTT) {
+					addDebug('STT onEnd — 자동 재시작 (WebSpeech)');
 					setTimeout(() => {
 						if (conversation.micEnabled && !isLoading) {
 							stt?.start();
@@ -195,28 +195,39 @@
 		};
 
 		if (Capacitor.isNativePlatform()) {
-			// AudioRecord → WebSocket → 서버 VOSK: 마이크 안 꺼짐
-			stt = new VoskSTT(sttCallbacks, settings.serverUrl);
-			addDebug('STT: Server VOSK (AudioRecord streaming — 연속 마이크)');
+			// Android 내장 SpeechRecognizer — 자동 재시작, 고품질 인식
+			stt = new NativeSTT(sttCallbacks);
+			addDebug('STT: Android SpeechRecognizer (네이티브, 자동 재시작)');
 		} else {
 			stt = new WebSpeechSTT(sttCallbacks);
 		}
 
 		// Mic guardian — ensure STT is always running when mic is on
+		// 더 보수적인 접근: 빈도 줄이고, 더 많은 상황에서 간섭하지 않음
 		const micGuardian = setInterval(() => {
 			if (!conversation.micEnabled || isLoading) return;
-			if (conversation.state !== 'speaking' && conversation.state !== 'processing') {
-				// Force state to listening
-				if (conversation.state !== 'listening') {
-					conversation.setListening();
-				}
-				// If STT isn't running, restart it
-				if (stt && !stt.isListening) {
-					addDebug('[Guardian] STT dead — restarting');
-					stt.start();
-				}
+			if (conversation.state === 'speaking' || conversation.state === 'processing') return;
+			
+			// NativeSTT 특별 처리: 자체 재시작 관리 중이면 절대 간섭하지 않음
+			if (stt instanceof NativeSTT) {
+				if (stt.isPaused || stt.isStarting || stt.isListening || stt.isSessionActive || stt.isRestartPending) return;
+			} else if (stt && stt.isListening) {
+				return;
 			}
-		}, 2000);
+
+			// 상태가 listening이 아니면 먼저 상태 수정
+			if (conversation.state !== 'listening') {
+				conversation.setListening();
+			}
+			
+			// STT가 실제로 죽어있을 때만 재시작
+			if (stt && !stt.isListening) {
+				addDebug('[Guardian] STT dead — restarting');
+				stt.start().catch((e) => {
+					console.warn('[Guardian] Restart failed:', e);
+				});
+			}
+		}, 5000);  // 3초 → 5초로 변경 (더 보수적)
 
 		// Animate waveform
 		const animate = () => {
@@ -234,10 +245,27 @@
 		};
 		animFrame = requestAnimationFrame(animate);
 
+		// 연결 완료 시 자동으로 마이크 ON (네이티브 앱만)
+		if (appState === 'connected' && stt && Capacitor.isNativePlatform()) {
+			conversation.micEnabled = true;
+			conversation.setListening();
+			addDebug('[VoiceChat] 마이크 자동 시작');
+			try {
+				await stt.start();
+			} catch (e) {
+				console.warn('[VoiceChat] Auto-mic failed:', e);
+			}
+		}
+
 		return () => {
+			console.log('[VoiceChat] Cleanup');
 			cancelAnimationFrame(animFrame);
 			clearInterval(micGuardian);
-			stt?.stop();
+			if (stt instanceof NativeSTT) {
+				stt.destroy();  // 완전한 정리
+			} else {
+				stt?.stop();
+			}
 			tts?.stop();
 		};
 		} catch (e) {
@@ -247,9 +275,27 @@
 		}
 	});
 
+	function playBeep(freq: number, duration: number) {
+		try {
+			const ctx = new AudioContext();
+			const osc = ctx.createOscillator();
+			const gain = ctx.createGain();
+			osc.frequency.value = freq;
+			gain.gain.value = 0.3;
+			osc.connect(gain);
+			gain.connect(ctx.destination);
+			osc.start();
+			gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration / 1000);
+			osc.stop(ctx.currentTime + duration / 1000);
+		} catch {}
+	}
+
 	async function toggleMic() {
 		conversation.micEnabled = !conversation.micEnabled;
 		sttError = '';
+
+		// 진동 없음 — 시각적 피드백만
+
 		if (conversation.micEnabled) {
 			conversation.setListening();
 			try {
@@ -259,6 +305,10 @@
 				conversation.setIdle();
 			}
 		} else {
+			// finalBuffer 정리 — 의도치 않은 메시지 전송 방지
+			if (finalTimer) { clearTimeout(finalTimer); finalTimer = null; }
+			finalBuffer = '';
+			conversation.interimText = '';
 			stt?.stop();
 			tts?.stop();
 			conversation.setIdle();
@@ -276,10 +326,8 @@
 			tts?.stop();
 		}
 
-		// Pause STT during processing (keep mic logically on) — will resume after response
-		if (isVoiceInput && stt && 'pause' in stt) {
-			(stt as any).pause();
-		}
+		// STT pause는 TTS onStart에서만 처리 — 여기서는 하지 않음
+		// 중복 pause 호출 방지 (TTS onStart에서 이미 pause됨)
 		conversation.setProcessing();
 
 		messages.push({ role: 'user', content: finalText });
@@ -326,22 +374,25 @@
 		} finally {
 			isLoading = false;
 
-			// Always restart/resume STT if mic is on — never leave mic off
-			if (conversation.micEnabled) {
+			// STT resume is handled by TTS onEnd callback
+			// Do NOT resume here — TTS may still be speaking and mic would pick it up
+			if (!conversation.micEnabled) {
+				conversation.setIdle();
+			}
+			// If mic is on but TTS is playing, stay muted until TTS finishes (onEnd will resume)
+			// If mic is on and no TTS, resume now
+			if (conversation.micEnabled && (!tts || !(tts as any)._speaking)) {
 				conversation.setListening();
 				try {
-					if (stt && 'resume' in stt) {
-						await (stt as any).resume();
-						addDebug('STT resume 완료');
-					} else {
-						await stt?.start();
-						addDebug('STT 재시작 완료');
+					if (stt instanceof NativeSTT) {
+						await stt.resume();
+					} else if (stt) {
+						await stt.start();
 					}
+					addDebug('STT 재개 완료 (no TTS)');
 				} catch (e) {
-					addDebug(`STT 재시작 실패: ${e}`);
+					addDebug(`STT 재개 실패: ${e}`);
 				}
-			} else {
-				conversation.setIdle();
 			}
 			scrollToBottom();
 		}
@@ -468,11 +519,14 @@
 	<header class="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<div class="flex items-center gap-2">
 			<button
-				onclick={() => { appState = 'select-instance'; }}
-				class="text-xl hover:scale-110 transition-transform"
+				onclick={() => { stt?.stop(); appState = 'select-instance'; }}
+				class="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors"
 				title="컴퓨터 변경"
-			>🦖</button>
-			<span class="font-semibold text-lg">{settings.getInstanceName(settings.selectedInstance, '렉스')}</span>
+			>
+				<span class="text-xl">🦖</span>
+				<span class="font-semibold text-lg">{settings.getInstanceName(settings.selectedInstance, '렉스')}</span>
+				<span class="text-xs text-gray-500">▼</span>
+			</button>
 			<span
 				class="text-xs px-2 py-0.5 rounded-full"
 				style="background-color: {conversation.stateColor}20; color: {conversation.stateColor}"

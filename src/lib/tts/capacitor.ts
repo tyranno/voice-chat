@@ -21,6 +21,11 @@ export class CapacitorTTS {
 		return this._isSpeaking;
 	}
 
+	/** Exposed for external checks (e.g., STT resume logic) */
+	get _speaking() {
+		return this._isSpeaking;
+	}
+
 	get available() {
 		return true;
 	}
@@ -100,8 +105,39 @@ export class CapacitorTTS {
 	}
 }
 
+/**
+ * Strip markdown, special chars, URLs etc. for natural TTS output
+ */
+function cleanForTTS(text: string): string {
+	return text
+		// Remove URLs
+		.replace(/https?:\/\/\S+/g, '')
+		// Remove markdown headers
+		.replace(/#{1,6}\s*/g, '')
+		// Remove bold/italic markers
+		.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+		.replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
+		// Remove strikethrough
+		.replace(/~~([^~]+)~~/g, '$1')
+		// Remove inline code backticks
+		.replace(/`([^`]+)`/g, '$1')
+		// Remove code blocks
+		.replace(/```[\s\S]*?```/g, '')
+		// Remove bullet points and list markers
+		.replace(/^[\s]*[-*+•]\s*/gm, '')
+		.replace(/^[\s]*\d+\.\s*/gm, '')
+		// Remove special characters that sound weird when read
+		.replace(/[_~`|>\\<\[\]{}()#*=+\-]/g, ' ')
+		// Remove emoji (optional - keep common ones)
+		.replace(/[\u{1F600}-\u{1F9FF}]/gu, '')
+		// Collapse multiple spaces
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
 function splitSentences(text: string): string[] {
-	if (!text.trim()) return [];
-	const parts = text.match(/[^.!?。]+[.!?。]?/g) || [text];
-	return parts.map((s) => s.trim()).filter((s) => s.length > 0);
+	const cleaned = cleanForTTS(text);
+	if (!cleaned) return [];
+	const parts = cleaned.match(/[^.!?。\n]+[.!?。]?/g) || [cleaned];
+	return parts.map((s) => s.trim()).filter((s) => s.length > 2);
 }

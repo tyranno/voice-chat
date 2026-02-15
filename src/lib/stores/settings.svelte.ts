@@ -8,7 +8,7 @@ interface Settings {
 	serverUrl: string;
 	selectedInstance: string;
 	instanceNames: Record<string, string>; // id → custom name
-	ttsEngine: 'webspeech' | 'elevenlabs';
+	ttsEngine: 'native' | 'webspeech' | 'elevenlabs';
 	sttEngine: 'webspeech' | 'deepgram';
 	language: string;
 }
@@ -17,7 +17,7 @@ const defaults: Settings = {
 	serverUrl: 'https://voicechat.tyranno.xyz',
 	selectedInstance: '',
 	instanceNames: {},
-	ttsEngine: 'webspeech',
+	ttsEngine: 'native',
 	sttEngine: 'webspeech',
 	language: 'ko-KR'
 };
@@ -27,7 +27,14 @@ function load(): Settings {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (!raw) return { ...defaults };
-		return { ...defaults, ...JSON.parse(raw) };
+		const saved = { ...defaults, ...JSON.parse(raw) };
+		// v6 migration: force native TTS on upgrade
+		if (saved.ttsEngine === 'webspeech' && saved.sttEngine === 'webspeech') {
+			saved.ttsEngine = 'native';
+			saved.sttEngine = 'vosk';
+			localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+		}
+		return saved;
 	} catch {
 		return { ...defaults };
 	}
@@ -58,7 +65,7 @@ class SettingsStore {
 	}
 
 	get ttsEngine() { return this.#settings.ttsEngine; }
-	set ttsEngine(v: 'webspeech' | 'elevenlabs') { this.#settings.ttsEngine = v; save(this.#settings); }
+	set ttsEngine(v: 'native' | 'webspeech' | 'elevenlabs') { this.#settings.ttsEngine = v; save(this.#settings); }
 
 	get sttEngine() { return this.#settings.sttEngine; }
 	set sttEngine(v: 'webspeech' | 'deepgram') { this.#settings.sttEngine = v; save(this.#settings); }

@@ -125,8 +125,29 @@ export class WebSpeechTTS {
 	}
 }
 
+/**
+ * Strip markdown, special chars, URLs etc. for natural TTS output
+ */
+function cleanForTTS(text: string): string {
+	return text
+		.replace(/https?:\/\/\S+/g, '')
+		.replace(/#{1,6}\s*/g, '')
+		.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+		.replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
+		.replace(/~~([^~]+)~~/g, '$1')
+		.replace(/`([^`]+)`/g, '$1')
+		.replace(/```[\s\S]*?```/g, '')
+		.replace(/^[\s]*[-*+•]\s*/gm, '')
+		.replace(/^[\s]*\d+\.\s*/gm, '')
+		.replace(/[_~`|>\\<\[\]{}()#*=+\-]/g, ' ')
+		.replace(/[\u{1F600}-\u{1F9FF}]/gu, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
 function splitSentences(text: string): string[] {
-	if (!text.trim()) return [];
-	const parts = text.match(/[^.!?。]+[.!?。]?/g) || [text];
-	return parts.map((s) => s.trim()).filter((s) => s.length > 0);
+	const cleaned = cleanForTTS(text);
+	if (!cleaned) return [];
+	const parts = cleaned.match(/[^.!?。\n]+[.!?。]?/g) || [cleaned];
+	return parts.map((s) => s.trim()).filter((s) => s.length > 2);
 }

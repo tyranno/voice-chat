@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportHeight="108"
+    android:viewportWidth="108">
+    <!-- T-Rex 공룡 실루엣 (흰색) - adaptive icon safe zone 중앙 -->
+    <!-- 머리 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58,28 L72,28 L74,30 L74,36 L72,38 L68,38 L68,40 L64,40 L64,42 L58,42 L56,40 L56,32 L58,28z" />
+    <!-- 눈 -->
+    <path
+        android:fillColor="#1E40AF"
+        android:pathData="M68,31 a2,2 0 1,1 0,4 a2,2 0 1,1 0,-4z" />
+    <!-- 입 (이빨) -->
+    <path
+        android:fillColor="#1E40AF"
+        android:pathData="M72,34 L74,34 L74,36 L72,36z" />
+    <!-- 목 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M56,40 L62,40 L62,48 L56,48z" />
+    <!-- 몸통 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,48 L66,48 L68,50 L68,66 L66,68 L60,68 L60,64 L52,64 L52,68 L46,68 L44,66 L44,48z" />
+    <!-- 왼쪽 팔 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,50 L40,52 L38,56 L40,56 L44,54z" />
+    <!-- 오른쪽 팔 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M66,50 L70,52 L72,56 L70,56 L66,54z" />
+    <!-- 왼쪽 다리 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,68 L52,68 L52,78 L54,78 L54,80 L44,80 L44,78 L46,78z" />
+    <!-- 오른쪽 다리 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M58,68 L64,68 L64,78 L66,78 L66,80 L56,80 L56,78 L58,78z" />
+    <!-- 꼬리 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M44,52 L40,54 L36,58 L32,60 L30,60 L30,58 L34,54 L38,50 L44,48z" />
+</vector>
