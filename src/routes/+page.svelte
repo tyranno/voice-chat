@@ -13,7 +13,14 @@
 	import { CloudTTS } from '$lib/tts/cloud';
 	import { onMount } from 'svelte';
 	import { extractFileUrls, downloadFile } from '$lib/api/downloader';
-	// SpeechRecognition imported dynamically in checkConnection to avoid SSR issues
+	import {
+		listConversations, createConversation, getMessages,
+		saveMessages as serverSaveMessages, deleteConversation as serverDeleteConversation,
+		type ConversationMeta
+	} from '$lib/api/conversations';
+	import { onFcmNotification, type Notification } from '$lib/api/notifications';
+	import { initMusicHistory, addToHistory, savePlaylist, getHistory, getPlaylists, deletePlaylist, type MusicPlaylist } from '$lib/stores/musicHistory.svelte';
+	import { registerFcmToken } from '$lib/api/fcm';
 
 	interface DownloadInfo {
 		url: string;
@@ -32,6 +39,53 @@
 	let messages: Message[] = $state([]);
 	let input = $state('');
 	let isLoading = $state(false);
+	let showSidebar = $state(false);
+	let currentConversationId = $state<string | null>(null);
+	let conversationList = $state<ConversationMeta[]>([]);
+	let musicVideoId = $state<string | null>(null);
+	let musicTitle = $state('');
+	let musicIframe: HTMLIFrameElement | null = null;
+	let musicExpanded = $state(false);
+	let musicPlaylist = $state<Array<{ videoId: string; title: string }>>([]);
+	let musicIndex = $state(0);
+	let musicSpeed = $state(1.0);
+
+	function musicCommand(cmd: string, args: any[] = []) {
+		if (!musicIframe?.contentWindow) return;
+		musicIframe.contentWindow.postMessage(JSON.stringify({
+			event: 'command', func: cmd, args: args
+		}), '*');
+	}
+	function pauseMusic() { musicCommand('pauseVideo'); }
+	function resumeMusic() { musicCommand('playVideo'); }
+	function muteMusic() { musicCommand('mute'); }
+	function unmuteMusic() { musicCommand('unMute'); }
+	function setPlaybackRate(rate: number) {
+		musicSpeed = rate;
+		musicCommand('setPlaybackRate', [rate]);
+	}
+
+	function playMusicFromPlaylist(index: number) {
+		if (index < 0 || index >= musicPlaylist.length) return;
+		musicIndex = index;
+		const item = musicPlaylist[index];
+		musicVideoId = item.videoId;
+		musicTitle = item.title;
+		musicSpeed = 1.0;
+		addToHistory(item.videoId, item.title);
+	}
+
+	function nextTrack() {
+		if (musicIndex < musicPlaylist.length - 1) {
+			playMusicFromPlaylist(musicIndex + 1);
+		}
+	}
+
+	function prevTrack() {
+		if (musicIndex > 0) {
+			playMusicFromPlaylist(musicIndex - 1);
+		}
+	}
 	let messagesContainer: HTMLDivElement;
 	let showTextInput = $state(false);
 
@@ -48,7 +102,7 @@
 	let debugLog = $state('');
 	let finalBuffer = '';
 	let finalTimer: ReturnType<typeof setTimeout> | null = null;
-	const FINAL_DEBOUNCE_MS = 200;
+	const FINAL_DEBOUNCE_MS = 3000;  // 서버 silence 2.0s + Google API 응답 + 여유
 
 	let pendingMessage = '';
 
@@ -78,6 +132,48 @@
 		const t = new Date().toLocaleTimeString('ko-KR');
 		debugLog = `[${t}] ${msg}\n${debugLog}`.slice(0, 2000);
 		console.log(`[VoiceChat] ${msg}`);
+	}
+
+	async function persistMessages() {
+		if (!currentConversationId) return;
+		try {
+			await serverSaveMessages(currentConversationId, messages.map(m => ({ role: m.role, content: m.content })));
+			await refreshConversationList();
+		} catch (e) { console.error('[Conversations] Save failed:', e); }
+	}
+
+	async function refreshConversationList() {
+		try { conversationList = await listConversations(); } catch {}
+	}
+
+	async function switchConversation(id: string) {
+		await persistMessages();
+		try {
+			const loaded = await getMessages(id);
+			messages = loaded.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+			currentConversationId = id;
+		} catch (e) { addDebug(`대화 로드 실패: ${e}`); }
+		showSidebar = false;
+	}
+
+	async function startNewConversation() {
+		await persistMessages();
+		try {
+			const conv = await createConversation();
+			currentConversationId = conv.id;
+			messages = [];
+			await refreshConversationList();
+		} catch (e) { addDebug(`새 대화 생성 실패: ${e}`); }
+		showSidebar = false;
+	}
+
+	async function handleDeleteConversation(id: string, e: Event) {
+		e.stopPropagation();
+		try {
+			await serverDeleteConversation(id);
+			if (id === currentConversationId) { messages = []; await startNewConversation(); }
+			await refreshConversationList();
+		} catch {}
 	}
 
 	function scrollToBottom() {
@@ -151,6 +247,35 @@
 	onMount(async () => {
 		try {
 		addDebug(`Platform: ${Capacitor.getPlatform()}`);
+		initMusicHistory();
+
+		// Register FCM token
+		registerFcmToken().then(token => {
+			if (token) addDebug(`FCM 등록 완료`);
+		});
+
+		// Listen for FCM notifications (forwarded from native)
+		onFcmNotification((notif) => {
+			addDebug(`🔔 ${notif.title}: ${notif.message}`);
+			const text = notif.title ? `${notif.title}. ${notif.message}` : notif.message;
+			if (tts && text) {
+				tts.speak(text);
+			}
+		});
+
+		// Load conversations from server
+		try {
+			conversationList = await listConversations();
+			if (conversationList.length > 0) {
+				currentConversationId = conversationList[0].id;
+				const loaded = await getMessages(currentConversationId);
+				if (loaded.length > 0) {
+					messages = loaded.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+					addDebug(`대화 복원: ${loaded.length}개 메시지`);
+				}
+			}
+		} catch (e) { addDebug(`대화 목록 로드: ${e}`); }
+
 		await checkConnection();
 
 		// Initialize TTS — Cloud TTS on Android, WebSpeech on desktop
@@ -190,6 +315,8 @@
 		const sttCallbacks = {
 			onInterim: (text: string) => {
 				conversation.interimText = finalBuffer ? finalBuffer + ' ' + text : text;
+				// 음악 재생 중 음성 감지 시 일시정지
+				if (musicVideoId && text.trim()) pauseMusic();
 			},
 			onFinal: (text: string) => {
 				if (text.trim()) {
@@ -337,6 +464,122 @@
 		}
 	}
 
+	async function handleMusicRequest(text: string): Promise<boolean> {
+		// 멈춤/정지
+		if (/(?:노래|음악|곡)?\s*(?:멈춰|정지|꺼|중지|스톱|stop)/.test(text)) {
+			if (musicVideoId) {
+				musicVideoId = null;
+				musicTitle = '';
+				musicPlaylist = [];
+				messages.push({ role: 'user', content: text });
+				messages.push({ role: 'assistant', content: '🎵 음악을 멈췄습니다.' });
+				tts?.speak('음악을 멈췄습니다.');
+				return true;
+			}
+			return false;
+		}
+
+		// 다음 곡
+		if (/(?:다음|넥스트|next)\s*(?:곡|노래|음악)?/.test(text) && musicVideoId) {
+			if (musicIndex < musicPlaylist.length - 1) {
+				nextTrack();
+				messages.push({ role: 'user', content: text });
+				messages.push({ role: 'assistant', content: `🎵 다음 곡: "${musicTitle}"` });
+				tts?.speak(`다음 곡, ${musicTitle}`);
+			} else {
+				messages.push({ role: 'user', content: text });
+				messages.push({ role: 'assistant', content: '🎵 마지막 곡입니다.' });
+				tts?.speak('마지막 곡입니다.');
+			}
+			return true;
+		}
+
+		// 이전 곡
+		if (/(?:이전|이전곡|previous|prev)\s*(?:곡|노래|음악)?/.test(text) && musicVideoId) {
+			if (musicIndex > 0) {
+				prevTrack();
+				messages.push({ role: 'user', content: text });
+				messages.push({ role: 'assistant', content: `🎵 이전 곡: "${musicTitle}"` });
+				tts?.speak(`이전 곡, ${musicTitle}`);
+			} else {
+				messages.push({ role: 'user', content: text });
+				messages.push({ role: 'assistant', content: '🎵 첫 번째 곡입니다.' });
+				tts?.speak('첫 번째 곡입니다.');
+			}
+			return true;
+		}
+
+		// 빠르게/느리게 재생
+		const speedMatch = text.match(/(?:(\d(?:\.\d)?)\s*배속)|(?:(빠르게|빨리|느리게|천천히|보통|원래)\s*(?:재생)?)/);
+		if (speedMatch && musicVideoId) {
+			let speed = 1.0;
+			if (speedMatch[1]) {
+				speed = parseFloat(speedMatch[1]);
+			} else if (speedMatch[2]) {
+				const cmd = speedMatch[2];
+				if (cmd === '빠르게' || cmd === '빨리') speed = 1.5;
+				else if (cmd === '느리게' || cmd === '천천히') speed = 0.75;
+				else speed = 1.0;
+			}
+			speed = Math.max(0.25, Math.min(2.0, speed));
+			setPlaybackRate(speed);
+			messages.push({ role: 'user', content: text });
+			messages.push({ role: 'assistant', content: `🎵 ${speed}배속으로 재생합니다.` });
+			tts?.speak(`${speed}배속으로 재생합니다.`);
+			return true;
+		}
+
+		// 음악 재생 키워드 감지
+		const musicPatterns = [
+			/(.+?)\s*(?:노래|음악|곡)\s*(?:틀어|재생|검색|찾아|들려)/,
+			/(?:노래|음악|곡)\s*(?:틀어|재생|검색|찾아|들려)\s*(.+)/,
+			/(.+?)\s*(?:틀어줘|재생해줘|들려줘|플레이)/,
+			/(?:다른|다음)\s*(?:노래|음악|곡)\s*(?:틀어|재생)/,
+		];
+
+		let searchQuery = '';
+		for (const pattern of musicPatterns) {
+			const match = text.match(pattern);
+			if (match && match[1]) {
+				searchQuery = match[1].replace(/(?:노래|음악|곡|좀|해서|해줘|줘|다른|다음)/g, '').trim();
+				break;
+			}
+		}
+		if (!searchQuery) return false;
+
+		addDebug(`🎵 음악 요청 감지: "${searchQuery}"`);
+		messages.push({ role: 'user', content: text });
+		messages.push({ role: 'assistant', content: `🎵 "${searchQuery}" 검색 중...` });
+		const idx = messages.length - 1;
+
+		try {
+			const res = await fetch(`${settings.serverUrl}/api/youtube/search?q=${encodeURIComponent(searchQuery)}`);
+			if (!res.ok) throw new Error('검색 실패');
+			const results = await res.json();
+			if (!results || results.length === 0) {
+				messages[idx].content = `검색 결과가 없습니다: "${searchQuery}"`;
+				tts?.speak(`${searchQuery} 검색 결과가 없습니다.`);
+				return true;
+			}
+			const first = results[0];
+			messages[idx].content = `🎵 "${first.title}" 재생합니다.`;
+			tts?.speak(`${first.title} 재생합니다.`);
+			// 플레이리스트 저장 + 미니 플레이어에서 재생
+			musicPlaylist = results.map((r: any) => ({ videoId: r.videoId, title: r.title }));
+			musicIndex = 0;
+			musicVideoId = first.videoId;
+			musicTitle = first.title;
+			musicSpeed = 1.0;
+			addToHistory(first.videoId, first.title);
+			savePlaylist(searchQuery, musicPlaylist);
+			persistMessages();
+		} catch (e) {
+			messages[idx].content = `음악 검색 오류: ${e}`;
+			tts?.speak('음악 검색에 실패했습니다.');
+		}
+		return true;
+	}
+
 	async function sendMessage(text?: string) {
 		const finalText = text || input.trim();
 		if (!finalText || isLoading) {
@@ -344,6 +587,15 @@
 			return;
 		}
 		addDebug(`📤 sendMessage: "${finalText}"`);
+
+		// 음악 재생 중이면 일시정지
+		if (musicVideoId) pauseMusic();
+
+		// 음악 요청이면 YouTube 검색으로 처리
+		if (await handleMusicRequest(finalText)) {
+			input = '';
+			return;
+		}
 
 		// Track input method: voice (text param) vs keyboard (no text param)
 		const isVoiceInput = !!text;
@@ -378,10 +630,10 @@
 							scrollToBottom();
 							if (fullResponse.length <= 30) addDebug(`📥 delta: "${delta}"`);
 
-							// TTS: 문장 단위로 즉시 재생 (쉼표도 끊기)
+							// TTS: 문장 단위로 즉시 재생 (문장부호 기준, 쉼표 제외)
 							sentenceBuffer += delta;
-							const sentenceEnd = sentenceBuffer.match(/[.!?,。\n]/);
-							if (sentenceEnd && sentenceBuffer.trim().length > 3) {
+							const sentenceEnd = sentenceBuffer.match(/[.!?。\n]/);
+							if (sentenceEnd && sentenceBuffer.trim().length > 10) {
 								tts?.addChunk(sentenceBuffer.trim());
 								sentenceBuffer = '';
 							}
@@ -403,16 +655,30 @@
 							}
 							resolve();
 						},
-						onError: (err) => { addDebug(`❌ API에러: ${err}`); reject(err); }
-					}
+						onError: (err) => { addDebug(`❌ API에러: ${err}`); isLoading = false; reject(err); }
+					},
+					0,
+					currentConversationId || undefined
 				);
 			});
 		} catch (err) {
 			messages[assistantIdx].content = `⚠️ 오류: ${err instanceof Error ? err.message : '알 수 없는 오류'}`;
 		} finally {
 			isLoading = false;
+			persistMessages();  // 서버에 대화 저장
 
-			// Vosk는 항상 듣고 있으므로 resume 불필요
+			// AI 응답 완료 후 음악 재개 (TTS 끝난 뒤)
+			if (musicVideoId) {
+				const waitForTts = () => {
+					if (tts && (tts as any)._isSpeaking) {
+						setTimeout(waitForTts, 500);
+					} else {
+						resumeMusic();
+					}
+				};
+				setTimeout(waitForTts, 1000);
+			}
+
 			// TTS가 끝나면 onEnd 콜백에서 상태 변경
 			if (!conversation.micEnabled) {
 				conversation.setIdle();
@@ -570,13 +836,17 @@
 	<header class="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
 		<div class="flex items-center gap-2">
 			<button
+				onclick={() => { showSidebar = !showSidebar; if (showSidebar) refreshConversationList(); }}
+				class="p-2 rounded-lg hover:bg-gray-800 transition-colors"
+				title="대화 목록"
+			>☰</button>
+			<button
 				onclick={() => { stt?.stop(); appState = 'select-instance'; }}
 				class="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors"
 				title="컴퓨터 변경"
 			>
 				<span class="text-xl">🦖</span>
 				<span class="font-semibold text-lg">{settings.getInstanceName(settings.selectedInstance, '렉스')}</span>
-				<span class="text-xs text-gray-500">▼</span>
 			</button>
 			<span
 				class="text-xs px-2 py-0.5 rounded-full"
@@ -587,17 +857,63 @@
 		</div>
 		<div class="flex items-center gap-2">
 			<button
+				onclick={startNewConversation}
+				class="p-2 rounded-lg hover:bg-gray-800 transition-colors text-sm"
+				title="새 대화"
+			>✏️</button>
+			<button
 				onclick={() => (showTextInput = !showTextInput)}
 				class="p-2 rounded-lg hover:bg-gray-800 transition-colors text-sm"
 				title="텍스트 입력 토글"
-			>
-				⌨️
-			</button>
-			<button onclick={() => goto('/settings')} class="p-2 rounded-lg hover:bg-gray-800 transition-colors">
-				⚙️
-			</button>
+			>⌨️</button>
+			<button onclick={() => goto('/music')} class="p-2 rounded-lg hover:bg-gray-800 transition-colors text-sm" title="음악">🎵</button>
+			<button onclick={() => goto('/settings')} class="p-2 rounded-lg hover:bg-gray-800 transition-colors">⚙️</button>
 		</div>
 	</header>
+
+	<!-- Sidebar overlay -->
+	{#if showSidebar}
+		<div class="fixed inset-0 z-50 flex">
+			<div class="absolute inset-0 bg-black/60" onclick={() => showSidebar = false}></div>
+			<div class="relative w-72 max-w-[80vw] bg-gray-900 h-full flex flex-col shadow-2xl">
+				<div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+					<span class="font-semibold text-lg">💬 대화 목록</span>
+					<button onclick={startNewConversation} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors">+ 새 대화</button>
+				</div>
+				<div class="flex-1 overflow-y-auto">
+					{#each conversationList as conv}
+						<div
+							role="button" tabindex="0"
+							onclick={() => switchConversation(conv.id)}
+							onkeydown={(e) => { if (e.key === 'Enter') switchConversation(conv.id); }}
+							class="w-full text-left px-4 py-3 border-b border-gray-800/50 hover:bg-gray-800 transition-colors group cursor-pointer
+								{conv.id === currentConversationId ? 'bg-gray-800/70' : ''}"
+						>
+							<div class="flex items-start justify-between gap-2">
+								<div class="flex-1 min-w-0">
+									<p class="text-sm font-medium truncate">{conv.title}</p>
+									<p class="text-xs text-gray-500 mt-0.5">
+										{new Date(conv.updatedAt).toLocaleDateString('ko-KR')} {new Date(conv.updatedAt).toLocaleTimeString('ko-KR', {hour: '2-digit', minute: '2-digit'})}
+										· {conv.messageCount}개
+									</p>
+								</div>
+								<span
+									role="button" tabindex="-1"
+									onclick={(e) => handleDeleteConversation(conv.id, e)}
+									onkeydown={(e) => { if (e.key === 'Enter') handleDeleteConversation(conv.id, e); }}
+									class="opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-400 transition-all cursor-pointer"
+									title="삭제"
+								>🗑</span>
+							</div>
+						</div>
+					{/each}
+					{#if conversationList.length === 0}
+						<div class="px-4 py-8 text-center text-gray-500 text-sm">대화 내역이 없습니다</div>
+					{/if}
+				</div>
+			</div>
+		</div>
+	{/if}
 
 	<!-- Messages -->
 	<div bind:this={messagesContainer} class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -695,6 +1011,73 @@
 		</div>
 	</div>
 
+	<!-- Music Player -->
+	{#if musicVideoId}
+		{#if musicExpanded}
+			<!-- 전체 화면 -->
+			<div class="fixed inset-0 z-50 bg-black flex flex-col" style="padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);">
+				<div class="flex items-center justify-between px-4 py-3 bg-gray-900">
+					<div class="flex items-center gap-2 flex-1 min-w-0">
+						<span class="text-lg">🎵</span>
+						<p class="text-sm text-white truncate">{musicTitle || '재생 중'}</p>
+						<span class="text-xs text-gray-500">{musicIndex + 1}/{musicPlaylist.length}</span>
+					</div>
+					<div class="flex gap-2">
+						<button onclick={() => musicExpanded = false} class="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg">▼ 축소</button>
+						<button onclick={() => { musicVideoId = null; musicTitle = ''; musicExpanded = false; musicPlaylist = []; }} class="px-3 py-1.5 text-xs bg-red-700 hover:bg-red-600 rounded-lg">⏹</button>
+					</div>
+				</div>
+				<!-- 컨트롤 바 -->
+				<div class="flex items-center justify-center gap-4 px-4 py-2 bg-gray-900/80">
+					<button onclick={prevTrack} disabled={musicIndex <= 0} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg disabled:opacity-30">⏮</button>
+					<button onclick={pauseMusic} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg">⏸</button>
+					<button onclick={resumeMusic} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg">▶</button>
+					<button onclick={nextTrack} disabled={musicIndex >= musicPlaylist.length - 1} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg disabled:opacity-30">⏭</button>
+					<select onchange={(e) => setPlaybackRate(parseFloat((e.target as HTMLSelectElement).value))} class="px-2 py-2 text-xs bg-gray-700 rounded-lg text-white">
+						<option value="0.5" selected={musicSpeed === 0.5}>0.5x</option>
+						<option value="0.75" selected={musicSpeed === 0.75}>0.75x</option>
+						<option value="1" selected={musicSpeed === 1.0}>1x</option>
+						<option value="1.25" selected={musicSpeed === 1.25}>1.25x</option>
+						<option value="1.5" selected={musicSpeed === 1.5}>1.5x</option>
+						<option value="2" selected={musicSpeed === 2.0}>2x</option>
+					</select>
+				</div>
+				<div class="flex-1 relative">
+					<iframe
+						bind:this={musicIframe}
+						src={`https://www.youtube.com/embed/${musicVideoId}?autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent('https://localhost')}`}
+						style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+						allow="autoplay; encrypted-media"
+						allowfullscreen
+						title="Music Player"
+					></iframe>
+				</div>
+			</div>
+		{:else}
+			<!-- 미니 플레이어 -->
+			<div class="flex-shrink-0 bg-gray-900 border-t border-gray-800 px-3 py-2">
+				<div class="flex items-center gap-1.5">
+					<button onclick={prevTrack} disabled={musicIndex <= 0} class="p-1 text-sm disabled:opacity-30">⏮</button>
+					<span class="text-sm">🎵</span>
+					<p class="flex-1 text-xs text-gray-300 truncate">{musicTitle || '재생 중'} <span class="text-gray-500">({musicIndex+1}/{musicPlaylist.length})</span></p>
+					<button onclick={nextTrack} disabled={musicIndex >= musicPlaylist.length - 1} class="p-1 text-sm disabled:opacity-30">⏭</button>
+					<button onclick={() => musicExpanded = true} class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg">▲</button>
+					<button onclick={() => { musicVideoId = null; musicTitle = ''; musicPlaylist = []; }} class="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 rounded-lg">⏹</button>
+				</div>
+				<div class="mt-1 rounded-lg overflow-hidden" style="height: 0; padding-bottom: 20%; position: relative;">
+					<iframe
+						bind:this={musicIframe}
+						src={`https://www.youtube.com/embed/${musicVideoId}?autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent('https://localhost')}`}
+						style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
+						allow="autoplay; encrypted-media"
+						allowfullscreen
+						title="Music Player"
+					></iframe>
+				</div>
+			</div>
+		{/if}
+	{/if}
+
 	<!-- Text input (toggle) -->
 	{#if showTextInput}
 		<div class="px-4 pb-4 pt-2">
@@ -717,5 +1100,7 @@
 			</div>
 		</div>
 	{/if}
+
+
 </div>
 {/if}

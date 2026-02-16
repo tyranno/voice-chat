@@ -120,8 +120,10 @@ export class WebSpeechTTS {
 		this.queue = [];
 		this.stopKeepAlive();
 		if (this.synth) this.synth.cancel();
-		this._isSpeaking = false;
-		this.callbacks.onEnd();
+		if (this._isSpeaking) {
+			this._isSpeaking = false;
+			this.callbacks.onEnd();
+		}
 	}
 }
 

@@ -64,9 +64,9 @@ export class WebSpeechSTT {
 
 		rec.onend = () => {
 			this._isListening = false;
-			if (this.restartOnEnd) {
+			if (this.restartOnEnd && this.recognition) {  // Check if not manually stopped
 				setTimeout(() => {
-					if (this.restartOnEnd) this.start(this.lang);
+					if (this.restartOnEnd && this.recognition) this.start(this.lang);
 				}, 100);
 			} else {
 				this.callbacks.onEnd();

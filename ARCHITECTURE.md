@@ -1,227 +1,199 @@
-# VoiceChat 아키텍처 설계안
+# VoiceChat App 아키텍처
 
-> 작성일: 2025-02-14 | 상태: 코딩 에이전트 실행 전 설계안
+> 최종 업데이트: 2026-02-16
 
-## 1. 현재 문제 요약
+## 개요
 
-**증상:** 마이크 인식 UI는 활성화되나 메시지가 전송되지 않음
+VoiceChat은 음성 기반 AI 대화 앱입니다. Samsung S25에서 마이크로 말하면 음성인식(STT) → AI 응답 생성 → 음성합성(TTS)으로 대화합니다.
 
-### 근본 원인: 두 개의 STT 시스템 충돌
+## 기술 스택
 
-현재 Android에서 STT가 **이중 등록**되어 있음:
+- **프론트엔드**: SvelteKit + Capacitor (Android)
+- **서버**: Go (`voice-chat-server`) on GCP VM
+- **STT**: Google Cloud STT (REST API via WebSocket proxy)
+- **TTS**: Android TextToSpeech (on-device)
+- **AI**: OpenClaw Gateway → Anthropic Claude (ClawBridge 경유)
 
-| 파일 | 사용하는 것 | 역할 |
-|------|------------|------|
-| `native.ts` | `@capgo/capacitor-speech-recognition` (SpeechRecognition) | @capgo 플러그인의 `partialResults`, `listeningState` 이벤트 수신 |
-| `NativeSttPlugin.java` | Android `SpeechRecognizer` 직접 사용 | 자체 `sttResult` 이벤트 발신 |
+## 전체 시스템 구성
 
-**충돌 메커니즘:**
-1. `native.ts`는 `@capgo/capacitor-speech-recognition`의 `SpeechRecognition.start()`를 호출
-2. `NativeSttPlugin.java`는 `MainActivity`에 등록되어 있고, 자체 `SpeechRecognizer`를 생성
-3. **두 플러그인 모두 Android `SpeechRecognizer`를 사용** → 하나의 기기에서 동시에 두 recognizer가 충돌
-4. `native.ts`는 `NativeSttPlugin`의 `muteSystemSounds`/`unmuteSystemSounds`만 사용하지만, **NativeSttPlugin의 start/stop/pause/resume 메서드도 존재**하여 혼란 유발
+```
+Samsung S25 (VoiceChat App)
+  │
+  ├── 음성인식 (STT)
+  │     AudioRecord → OkHttp WebSocket
+  │       → wss://voicechat.tyranno.xyz/api/stt/stream
+  │       → GCP 서버 stt.go (WebSocket proxy)
+  │       → ws://127.0.0.1:2700 (google_stt_server.py)
+  │       → Google Cloud STT REST API
+  │       ← 인식 결과 JSON
+  │
+  ├── AI 대화 (Chat)
+  │     POST https://voicechat.tyranno.xyz/api/chat (SSE)
+  │       → GCP 서버 relay.go
+  │       → TCP (TLS :9090) → ClawBridge (Windows PC)
+  │       → clawdbot-service bridge.go
+  │       → POST http://localhost:18789/v1/chat/completions
+  │       → OpenClaw Gateway → Anthropic Claude
+  │       ← SSE 스트리밍 응답
+  │
+  └── 음성합성 (TTS)
+        AI 응답 텍스트 → Android TextToSpeech (on-device)
+        USAGE_ASSISTANCE_NAVIGATION_GUIDANCE (Samsung DND 우회)
+```
 
-**추가 문제:**
-- `capacitor.ts` — @capgo의 `continuous: true` 모드를 사용하는 또 다른 wrapper. 현재 import는 되지만 Android에서는 `NativeSTT`가 선택됨
-- `vosk.ts` — 제거 예정이지만 파일이 남아있음
-- `settings.sttEngine` — `'webspeech' | 'deepgram'` 타입인데 실제로는 사용되지 않음 (하드코딩된 platform 체크로 STT 선택)
+## 앱 내부 구조
 
-## 2. 현재 데이터 흐름 (의도된 것)
+### 파일 구조
+```
+src/
+├── routes/
+│   └── +page.svelte          # 메인 UI + 대화 로직
+├── lib/
+│   ├── api/
+│   │   └── openclaw.ts       # /api/chat SSE 스트리밍 클라이언트
+│   ├── stt/
+│   │   ├── native.ts         # Android: NativeSttPlugin wrapper
+│   │   └── webspeech.ts      # 웹 브라우저: Web Speech API
+│   ├── tts/
+│   │   ├── cloud.ts          # Android: NativeAudioPlugin wrapper (on-device TTS)
+│   │   └── webspeech.ts      # 웹 브라우저: SpeechSynthesis API
+│   ├── conversation.svelte.ts # 대화 상태 관리
+│   └── settings.svelte.ts     # 설정
+android/
+├── app/src/main/java/com/tyranokim/voicechat/
+│   ├── MainActivity.java
+│   ├── audio/
+│   │   └── NativeAudioPlugin.java    # TTS (Android TextToSpeech)
+│   └── stt/
+│       └── NativeSttPlugin.java      # STT (OkHttp WebSocket)
+```
+
+### 데이터 흐름
 
 ```
 [마이크 ON] → toggleMic()
-  → conversation.setListening()
   → NativeSTT.start()
-    → @capgo SpeechRecognition.start({ partialResults: true })
-    → partialResults 이벤트 → onInterim(text)
-    → listeningState:'stopped' → _emitFinal(text) → onFinal(text)
+  → NativeSttPlugin.java: OkHttp WebSocket 연결
+  → AudioRecord → 서버로 오디오 스트리밍
+  → 서버에서 인식 결과 수신
 
-onFinal(text):
-  → finalBuffer += text
-  → 1200ms 디바운스 타이머 시작
-  → 타이머 만료 → flushFinalBuffer()
-    → sendMessage(text)
-      → conversation.setProcessing()
-      → streamChat() → 서버 API 호출
-      → 응답 delta → TTS.addChunk()
-        → TTS.onStart → conversation.setSpeaking() + STT.pause()
-        → TTS.onEnd → conversation.setListening() + STT.resume()
+인식 결과 → onFinal(text)
+  → finalBuffer 축적
+  → 1200ms 디바운스 → flushFinalBuffer()
+  → sendMessage(text)
+
+sendMessage(text)
+  → streamChat() → /api/chat SSE
+  → 응답 delta → TTS.addChunk()
+  → TTS 시작 → STT.pause() (피드백 루프 방지)
+  → TTS 종료 → STT.resume()
 ```
 
-**문제 지점:**
-- `_emitFinal()`이 호출되려면 `partialResults`에서 `_lastResult`가 설정되어야 함
-- @capgo 플러그인과 NativeSttPlugin.java가 동시에 Android SpeechRecognizer를 점유하면 이벤트가 안 올 수 있음
+### STT (음성인식)
 
-## 3. 올바른 아키텍처 설계
+**Android (NativeSttPlugin.java)**:
+- OkHttp WebSocket으로 `wss://voicechat.tyranno.xyz/api/stt/stream` 연결
+- AudioRecord (16kHz, 16-bit, mono)로 마이크 캡처
+- 바이너리 오디오 → WebSocket → 서버 → Google STT
+- 인식 결과를 Capacitor 이벤트로 JS에 전달
 
-### 3.1 STT 엔진 단일화
+**웹 (webspeech.ts)**:
+- Web Speech API (`SpeechRecognition`) 사용
 
-**결정: `NativeSttPlugin.java`를 STT의 단일 진실 공급원(single source of truth)으로 사용**
+### TTS (음성합성)
 
-이유:
-- 이미 완성도 높은 Java 구현이 있음 (자동 재시작, 중복 제거, Google 인식 우선)
-- @capgo 플러그인의 내부 동작을 제어할 수 없음 (continuous 모드 불안정)
-- 비프음 제거(mute/unmute)가 같은 플러그인에 있어 타이밍 제어 용이
+**Android (NativeAudioPlugin.java)**:
+- Android `TextToSpeech` 사용 (on-device, 네트워크 불필요)
+- `USAGE_ASSISTANCE_NAVIGATION_GUIDANCE`로 AudioAttributes 설정
+  - Samsung S25의 DND/VIBRATE 모드에서도 소리 출력
+- **주의**: Samsung AudioHardening이 `setStreamVolume(STREAM_MUSIC)` 차단
+  → STREAM_MUSIC을 절대 mute하면 안 됨
 
-**제거할 것:**
-- `src/lib/stt/capacitor.ts` — 삭제
-- `src/lib/stt/vosk.ts` — 삭제
-- `@capgo/capacitor-speech-recognition` — **STT 용도로는 제거** (native.ts에서 import 제거)
-- `src/lib/stt/native.ts` — **NativeSttPlugin.java의 이벤트를 수신하도록 전면 재작성**
+**웹 (webspeech.ts)**:
+- Web Speech Synthesis API 사용
 
-**유지할 것:**
-- `src/lib/stt/webspeech.ts` — 웹 브라우저용 (변경 없음)
-- `NativeSttPlugin.java` — Android 네이티브 STT (기존 유지, 약간의 개선)
+### Chat (AI 대화)
 
-### 3.2 새로운 `native.ts` 설계
+**openclaw.ts**:
+- `POST /api/chat`으로 SSE 스트리밍 요청
+- `AbortController` 타임아웃: 60초 (SSE 스트리밍 고려)
+- 인스턴스 자동 복구: 서버 재시작으로 bridge ID 변경 시 자동 재연결
+- 재귀 depth 제한으로 무한 루프 방지
 
-```typescript
-// NativeSttPlugin.java의 Capacitor 이벤트를 직접 수신
-import { registerPlugin } from '@capacitor/core';
-import type { PluginListenerHandle } from '@capacitor/core';
+## 서버 구성
 
-interface NativeSttPlugin {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  pause(): Promise<void>;
-  resume(): Promise<void>;
-  isListening(): Promise<{ listening: boolean }>;
-  muteSystemSounds(): Promise<void>;
-  unmuteSystemSounds(): Promise<void>;
-  addListener(event: 'sttResult', handler: (data: { type: 'partial' | 'final'; text: string }) => void): Promise<PluginListenerHandle>;
-}
+### GCP VM (34.64.164.13 / voicechat.tyranno.xyz)
 
-const NativeStt = registerPlugin<NativeSttPlugin>('NativeStt');
+| 서비스 | 포트 | 역할 |
+|--------|------|------|
+| voice-chat-server | :443 (HTTPS) | API 서버 |
+| voice-chat-server | :9090 (TLS TCP) | ClawBridge 연결 |
+| google_stt_server.py | :2700 (localhost) | STT WebSocket |
+| nginx | :80 | HTTP→proxy (미사용) |
+
+**SSH 접속**:
+```bash
+ssh -i ~/.ssh/voicechat-key tyranno@34.64.164.13
 ```
 
-**핵심 변경:**
-- `@capgo/capacitor-speech-recognition` 완전 제거
-- `NativeStt` 플러그인 하나로 start/stop/pause/resume/mute 모두 처리
-- Java쪽 `notifyListeners("sttResult", ...)` → JS쪽 `addListener("sttResult", ...)` 직결
-- JS에서의 복잡한 타이머/재시작 로직 제거 (Java가 자체 관리)
+**API 엔드포인트**:
+| 경로 | 메서드 | 설명 |
+|------|--------|------|
+| `/health` | GET | 헬스체크 |
+| `/api/instances` | GET | 연결된 bridge 목록 |
+| `/api/chat` | POST | AI 대화 (SSE 스트리밍) |
+| `/api/tts` | POST/GET | Google Cloud TTS (MP3) |
+| `/api/stt/stream` | WebSocket | STT 프록시 |
+| `/api/apk/latest` | GET | APK 버전 정보 |
+| `/api/apk/download` | GET | APK 다운로드 |
+| `/api/files/upload` | POST | 파일 업로드 |
+| `/api/files/:id/:name` | GET | 파일 다운로드 |
 
-### 3.3 전체 파이프라인
+### Windows PC (우리집)
 
+| 서비스 | 역할 |
+|--------|------|
+| OpenClawGateway (Windows 서비스) | clawdbot-service.exe 실행 |
+| clawdbot-service | ClawBridge + Gateway 관리 |
+| OpenClaw Gateway (node) | AI 에이전트 (:18789) |
+
+**ClawBridge 흐름**:
 ```
-┌─────────────────────────────────────────────────┐
-│                  +page.svelte                    │
-│                                                  │
-│  toggleMic() → NativeSTT.start()                │
-│                    │                             │
-│  ┌─────────────────▼──────────────────┐         │
-│  │         NativeSttPlugin.java        │         │
-│  │  - SpeechRecognizer 생성/관리       │         │
-│  │  - 자동 재시작 (1500ms)            │         │
-│  │  - mute/unmute 시스템 사운드       │         │
-│  │  - 중복 결과 필터링                │         │
-│  │  - sttResult 이벤트 발신           │         │
-│  └──────────┬──────────┬──────────────┘         │
-│       partial│    final│                         │
-│  ┌──────────▼──────────▼──────────────┐         │
-│  │       native.ts (thin wrapper)      │         │
-│  │  - addListener('sttResult')         │         │
-│  │  - partial → onInterim callback     │         │
-│  │  - final → onFinal callback         │         │
-│  └──────────┬──────────┬──────────────┘         │
-│       interim│    final│                         │
-│  ┌──────────▼──────────▼──────────────┐         │
-│  │         +page.svelte 콜백           │         │
-│  │  onInterim → interimText 표시       │         │
-│  │  onFinal → finalBuffer 축적         │         │
-│  │  1200ms 무입력 → flushFinalBuffer() │         │
-│  └─────────────────┬──────────────────┘         │
-│                    │                             │
-│  ┌─────────────────▼──────────────────┐         │
-│  │          sendMessage(text)          │         │
-│  │  → conversation.setProcessing()     │         │
-│  │  → streamChat() API 호출            │         │
-│  └─────────────────┬──────────────────┘         │
-│                    │                             │
-│  ┌─────────────────▼──────────────────┐         │
-│  │        CapacitorTTS.addChunk()      │         │
-│  │  onStart → STT.pause() + setSpeaking│         │
-│  │  onEnd → STT.resume() + setListening│         │
-│  └────────────────────────────────────┘         │
-└─────────────────────────────────────────────────┘
+clawdbot-service → TLS TCP 연결 → voicechat.tyranno.xyz:9090
+  ← chat_request (앱에서 온 대화 요청)
+  → POST http://localhost:18789/v1/chat/completions (OpenClaw)
+  ← SSE delta 수신
+  → chat_response (delta) → GCP 서버 → 앱
 ```
 
-### 3.4 TTS↔STT 피드백 루프 방지
+## 빌드 & 배포
 
-현재 설계는 이미 올바름. 유지할 것:
-
-```
-TTS.onStart:
-  1. conversation.setSpeaking()
-  2. NativeStt.pause() → Java: shouldRestart=false, recognizer.destroy()
-  3. muteSystemSounds()는 불필요 (recognizer가 꺼져있으므로)
-
-TTS.onEnd:
-  1. 500ms 대기 (TTS 잔향 방지)
-  2. conversation.setListening()
-  3. NativeStt.resume() → Java: shouldRestart=true, startListening()
+### 앱 빌드
+```powershell
+cd E:\Project\My\voice-chat
+npm run build
+npx cap sync android
+cd android
+.\gradlew assembleDebug
+# APK: android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-**개선점:**
-- `native.ts`에서 pause/resume을 NativeStt 플러그인으로 직접 전달 (현재는 @capgo stop + 복잡한 JS 로직)
-- mute/unmute는 Java의 `startListening()` / `stopRecognizer()` 안에서 자동 처리
-
-### 3.5 에러 핸들링
-
-Java `NativeSttPlugin`이 이미 처리하는 것:
-- `ERROR_NO_MATCH` → 자동 재시작 (1500ms)
-- `ERROR_SPEECH_TIMEOUT` → 자동 재시작
-- `ERROR_CLIENT` → 자동 재시작
-
-JS에서 추가할 것:
-- `sttResult` 이벤트에 `type: 'error'`도 추가하여 UI에 표시 가능하게
-- 연속 5회 이상 에러 시 사용자에게 알림
-
-### 3.6 Settings 정리
-
-`settings.svelte.ts`의 `sttEngine` 타입 변경:
-```typescript
-sttEngine: 'native' | 'webspeech';  // 'deepgram' 제거
+### S25에 설치
+```powershell
+adb -s R3CY10AF61Z install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
-- Android → 자동으로 `'native'` (NativeSttPlugin)
-- 웹 → `'webspeech'` (WebSpeechSTT)
-- `sttEngine` 설정은 실제로 사용하거나, 아니면 완전히 제거하고 platform 체크만 사용
 
-## 4. 코딩 에이전트 실행 체크리스트
+### 서버 배포
+```powershell
+cd E:\Project\My\voice-chat-server
+.\build-linux.bat
+.\deploy.bat
+```
 
-### Phase 1: 정리
-- [ ] `src/lib/stt/vosk.ts` 삭제
-- [ ] `src/lib/stt/capacitor.ts` 삭제
-- [ ] `package.json`에서 `@capgo/capacitor-speech-recognition` 의존성 제거 (또는 유지 판단)
-- [ ] `+page.svelte`에서 `CapacitorSTT` import 제거
+## 알려진 이슈 & 교훈
 
-### Phase 2: native.ts 재작성
-- [ ] `native.ts`를 `NativeSttPlugin.java`의 thin wrapper로 재작성
-- [ ] `registerPlugin('NativeStt')`로 start/stop/pause/resume/addListener 사용
-- [ ] @capgo import 완전 제거
-- [ ] JS측 복잡한 타이머/재시작 로직 제거 (Java가 관리)
-
-### Phase 3: Java 플러그인 개선
-- [ ] `NativeSttPlugin.java`에 에러 이벤트 추가: `notifyListeners("sttResult", { type: "error", text: errorMsg })`
-- [ ] mute/unmute를 startListening/stopRecognizer 내부로 이동 (선택적)
-
-### Phase 4: 통합 테스트
-- [ ] 마이크 ON → 음성 인식 → finalBuffer 축적 → 메시지 전송 확인
-- [ ] TTS 재생 중 STT 일시정지 → TTS 끝 → STT 재개 확인
-- [ ] 침묵 시 자동 재시작 확인
-- [ ] 에러 후 복구 확인
-
-## 5. 파일별 변경 요약
-
-| 파일 | 액션 |
-|------|------|
-| `stt/vosk.ts` | **삭제** |
-| `stt/capacitor.ts` | **삭제** |
-| `stt/native.ts` | **전면 재작성** — NativeStt 플러그인 직접 사용 |
-| `stt/webspeech.ts` | 변경 없음 |
-| `+page.svelte` | CapacitorSTT import 제거, NativeSTT 사용법 업데이트 |
-| `NativeSttPlugin.java` | 에러 이벤트 추가 (선택적) |
-| `MainActivity.java` | 변경 없음 |
-| `conversation.svelte.ts` | 변경 없음 |
-| `settings.svelte.ts` | sttEngine 타입 정리 (선택적) |
-| `api/openclaw.ts` | 변경 없음 |
-| `tts/capacitor.ts` | 변경 없음 |
+- **Samsung S25 AudioHardening**: `setStreamVolume(STREAM_MUSIC, 0)` 차단됨. mute 절대 금지
+- **AbortController 타임아웃**: SSE 스트리밍은 오래 걸릴 수 있으므로 60초 이상 필요
+- **Instance ID**: 서버 재시작마다 bridge ID가 변경됨 → 앱에 자동 복구 로직 필수
+- **Vosk STT**: 품질 저하로 폐기 → Google Cloud STT (REST API)로 교체
+- **on-device TTS 선택 이유**: 네트워크 지연 없음, Samsung DND 우회 가능

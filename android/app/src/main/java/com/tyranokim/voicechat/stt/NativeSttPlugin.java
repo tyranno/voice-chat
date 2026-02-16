@@ -130,7 +130,9 @@ public class NativeSttPlugin extends Plugin {
         } else if (isRunning) {
             // WebSocket died during pause — reconnect
             Log.d(TAG, "WebSocket dead after pause, reconnecting");
-            getActivity().runOnUiThread(() -> reconnect());
+            if (getActivity() != null) {
+                getActivity().runOnUiThread(() -> reconnect());
+            }
         }
         call.resolve();
     }
@@ -209,13 +211,28 @@ public class NativeSttPlugin extends Plugin {
             public void onOpen(WebSocket ws, Response response) {
                 Log.d(TAG, "WebSocket connected");
                 // Start recording after WebSocket is open
+                if (audioRecord == null) {
+                    Log.e(TAG, "audioRecord is null on WebSocket open, aborting");
+                    ws.close(1000, "No audio recorder");
+                    return;
+                }
                 audioRecord.startRecording();
                 Log.d(TAG, "Recording started (Server STT, " + SAMPLE_RATE + "Hz)");
 
                 recordingThread = new Thread(() -> {
                     byte[] buffer = new byte[finalBufferSize];
                     while (isRunning) {
-                        int read = audioRecord.read(buffer, 0, buffer.length);
+                        if (audioRecord == null) {
+                            Log.w(TAG, "audioRecord is null, exiting recording thread");
+                            break;
+                        }
+                        int read;
+                        try {
+                            read = audioRecord.read(buffer, 0, buffer.length);
+                        } catch (Exception e) {
+                            Log.e(TAG, "audioRecord.read error: " + e.getMessage());
+                            break;
+                        }
                         if (read <= 0) continue;
                         if (isPaused) continue;
 
@@ -272,7 +289,9 @@ public class NativeSttPlugin extends Plugin {
                     try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
                     if (isRunning) {
                         Log.d(TAG, "Reconnecting...");
-                        getActivity().runOnUiThread(() -> reconnect());
+                        if (getActivity() != null) {
+                            getActivity().runOnUiThread(() -> reconnect());
+                        }
                     }
                 }
             }
@@ -280,7 +299,7 @@ public class NativeSttPlugin extends Plugin {
             @Override
             public void onClosed(WebSocket ws, int code, String reason) {
                 Log.d(TAG, "WebSocket closed: " + code + " " + reason);
-                if (isRunning) {
+                if (isRunning && getActivity() != null) {
                     getActivity().runOnUiThread(() -> reconnect());
                 }
             }

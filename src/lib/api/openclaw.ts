@@ -16,7 +16,7 @@ interface StreamCallbacks {
 
 async function fetchOnce(url: string, init: RequestInit): Promise<Response> {
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), 15000);
+	const timeout = setTimeout(() => controller.abort(), 60000);
 	try {
 		const res = await fetch(url, { ...init, signal: controller.signal });
 		return res;
@@ -25,7 +25,8 @@ async function fetchOnce(url: string, init: RequestInit): Promise<Response> {
 	}
 }
 
-export async function streamChat(messages: Message[], callbacks: StreamCallbacks): Promise<void> {
+export async function streamChat(messages: Message[], callbacks: StreamCallbacks, retryDepth = 0, conversationId?: string): Promise<void> {
+	const MAX_RETRY_DEPTH = 1;
 	let response: Response;
 	try {
 		response = await fetchOnce(settings.chatEndpoint, {
@@ -35,7 +36,8 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 			},
 			body: JSON.stringify({
 				instanceId: settings.selectedInstance,
-				messages
+				messages,
+				conversationId
 			})
 		});
 	} catch (err) {
@@ -45,7 +47,7 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 
 	if (!response.ok) {
 		const errText = await response.text().catch(() => '');
-		if (response.status === 404 && errText.includes('Instance not found')) {
+		if (response.status === 404 && errText.includes('Instance not found') && retryDepth < MAX_RETRY_DEPTH) {
 			// Instance ID changed — try to auto-recover
 			try {
 				const { getInstances } = await import('./instances');
@@ -53,8 +55,8 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 				if (instances.length > 0) {
 					settings.selectedInstance = instances[0].id;
 					console.log(`[VoiceChat] Instance auto-recovered: ${instances[0].id}`);
-					// Retry with new instance
-					return streamChat(messages, callbacks);
+					// Retry with new instance (limited depth)
+					return streamChat(messages, callbacks, retryDepth + 1, conversationId);
 				}
 			} catch {}
 		}

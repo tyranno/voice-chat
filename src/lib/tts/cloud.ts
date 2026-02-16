@@ -72,7 +72,9 @@ export class CloudTTS {
 		if (sentences.length === 0) return;
 		this.cancelled = false;
 		this.queue.push(...sentences);
-		this.kickStart();
+		if (!this.playing) {  // Only kickStart if not already playing
+			this.kickStart();
+		}
 	}
 
 	private kickStart() {

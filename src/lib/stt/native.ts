@@ -58,9 +58,10 @@ export class NativeSTT {
 
 	async start(): Promise<void> {
 		if (this._started) return;
-		this._started = true;
+		
 		this._paused = false;
-
+		this._isListening = false;  // Reset before starting
+		
 		try {
 			// 리스너 등록 (한 번만)
 			if (!this.listenerHandle) {
@@ -85,6 +86,8 @@ export class NativeSTT {
 			}
 
 			await NativeStt.start({ serverUrl: this.serverUrl });
+			// Only set _started after successful start
+			this._started = true;
 			this._isListening = true;
 			console.log('[NativeSTT] Started');
 		} catch (e) {
@@ -120,6 +123,9 @@ export class NativeSTT {
 			this._isListening = true;
 		} catch (e) {
 			console.error('[NativeSTT] Resume failed:', e);
+			// Don't set _isListening to true on failure
+			this._paused = true;  // Revert to paused state
+			this.callbacks.onError(`STT 재개 실패: ${e}`);
 		}
 	}
 
