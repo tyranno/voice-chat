@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+
+	function onBackPress() { goto('/'); }
+	onDestroy(() => window.removeEventListener('hardwareBackPress', onBackPress));
 	import { page } from '$app/state';
 	import { initMusicHistory, addToHistory, savePlaylist, getHistory, getPlaylists, deletePlaylist, clearHistory, type MusicPlaylist, type MusicHistoryItem } from '$lib/stores/musicHistory.svelte';
 
@@ -20,6 +23,7 @@
 	}
 
 	onMount(() => {
+		window.addEventListener('hardwareBackPress', onBackPress);
 		initMusicHistory();
 		refreshData();
 		const autoplay = page.url.searchParams.get('autoplay');

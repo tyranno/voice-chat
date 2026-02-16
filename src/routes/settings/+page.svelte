@@ -1,6 +1,11 @@
 <script lang="ts">
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { settings } from '$lib/stores/settings.svelte';
+
+	function onBackPress() { goto('/'); }
+	onMount(() => window.addEventListener('hardwareBackPress', onBackPress));
+	onDestroy(() => window.removeEventListener('hardwareBackPress', onBackPress));
 	import { checkServerHealth } from '$lib/api/health';
 	import { checkForUpdate, downloadAndInstall, type ApkInfo } from '$lib/api/updater';
 

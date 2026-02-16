@@ -232,9 +232,22 @@
 		addDebug(`상태: ${appState}, 선택: ${settings.selectedInstance}`);
 	}
 
-	function selectInstance(id: string) {
+	async function selectInstance(id: string) {
 		settings.selectedInstance = id;
 		appState = 'connected';
+		// 대화 초기화 (다른 장비의 대화)
+		messages = [];
+		currentConversationId = null;
+		try {
+			conversationList = await listConversations();
+			if (conversationList.length > 0) {
+				currentConversationId = conversationList[0].id;
+				const loaded = await getMessages(currentConversationId);
+				if (loaded.length > 0) {
+					messages = loaded.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+				}
+			}
+		} catch {}
 		// 인스턴스 선택 즉시 마이크 자동 ON
 		if (stt && Capacitor.isNativePlatform()) {
 			conversation.micEnabled = true;
@@ -244,7 +257,31 @@
 		}
 	}
 
+	let showExitConfirm = $state(false);
+
 	onMount(async () => {
+		// 뒤로가기 버튼 처리 (네이티브 hardwareBackPress 이벤트)
+		window.addEventListener('hardwareBackPress', () => {
+			if (showExitConfirm) {
+				showExitConfirm = false;
+			} else if (showSidebar) {
+				showSidebar = false;
+			} else if (musicExpanded) {
+				musicExpanded = false;
+			} else if (appState === 'select-instance') {
+				if (settings.selectedInstance) {
+					appState = 'connected';
+				} else {
+					showExitConfirm = true;
+				}
+			} else if (appState === 'no-server' || appState === 'no-instance') {
+				showExitConfirm = true;
+			} else if (appState === 'connected') {
+				// 채팅창에서 뒤로가기 → 종료 확인
+				showExitConfirm = true;
+			}
+		});
+
 		try {
 		addDebug(`Platform: ${Capacitor.getPlatform()}`);
 		initMusicHistory();
@@ -851,7 +888,7 @@
 				title="대화 목록"
 			>☰</button>
 			<button
-				onclick={() => { stt?.stop(); appState = 'select-instance'; }}
+				onclick={async () => { stt?.stop(); try { instances = await getInstances(); } catch {} appState = 'select-instance'; }}
 				class="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors"
 				title="컴퓨터 변경"
 			>
@@ -1112,5 +1149,25 @@
 	{/if}
 
 
+</div>
+{/if}
+
+<!-- 종료 확인 다이얼로그 -->
+{#if showExitConfirm}
+<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70">
+	<div class="bg-gray-900 rounded-2xl p-6 mx-8 max-w-sm w-full shadow-2xl">
+		<p class="text-white text-lg font-semibold text-center mb-2">앱 종료</p>
+		<p class="text-gray-400 text-center text-sm mb-6">앱을 종료하시겠습니까?</p>
+		<div class="flex gap-3">
+			<button
+				onclick={() => showExitConfirm = false}
+				class="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium text-white transition-colors"
+			>취소</button>
+			<button
+				onclick={() => { import('@capacitor/app').then(({ App }) => App.exitApp()); }}
+				class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl font-medium text-white transition-colors"
+			>종료</button>
+		</div>
+	</div>
 </div>
 {/if}
