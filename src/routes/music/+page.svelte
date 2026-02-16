@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { initMusicHistory, addToHistory, getHistory, getPlaylists, deletePlaylist, type MusicPlaylist, type MusicHistoryItem } from '$lib/stores/musicHistory.svelte';
+	import { initMusicHistory, addToHistory, savePlaylist, getHistory, getPlaylists, deletePlaylist, clearHistory, type MusicPlaylist, type MusicHistoryItem } from '$lib/stores/musicHistory.svelte';
 
 	let query = $state('');
 	let searchResults = $state<Array<{ videoId: string; title: string; thumbnail: string }>>([]);
@@ -43,7 +43,13 @@
 			if (!res.ok) throw new Error('검색 실패');
 			const data = await res.json();
 			searchResults = (data || []).slice(0, 20);
-			if (searchResults.length === 0) searchError = '검색 결과가 없습니다.';
+			if (searchResults.length === 0) {
+				searchError = '검색 결과가 없습니다.';
+			} else {
+				// 검색 결과를 플레이리스트로 자동 저장
+				savePlaylist(query.trim(), searchResults.map(r => ({ videoId: r.videoId, title: r.title })));
+				refreshData();
+			}
 		} catch (e: any) {
 			searchError = `검색 오류: ${e.message}`;
 		} finally {
@@ -151,6 +157,11 @@
 			</div>
 
 		{:else if showTab === 'history'}
+			{#if historyItems.length > 0}
+				<div class="flex justify-end mb-2">
+					<button onclick={() => { clearHistory(); refreshData(); }} class="text-xs text-gray-500 hover:text-red-400 transition-colors">전체 삭제</button>
+				</div>
+			{/if}
 			{#if historyItems.length === 0}
 				<div class="text-center py-16 text-gray-500">
 					<p class="text-4xl mb-3">⏱</p>

@@ -258,7 +258,7 @@
 		onFcmNotification((notif) => {
 			addDebug(`🔔 ${notif.title}: ${notif.message}`);
 			const text = notif.title ? `${notif.title}. ${notif.message}` : notif.message;
-			if (tts && text) {
+			if (tts && text && conversation.micEnabled) {
 				tts.speak(text);
 			}
 		});
@@ -588,6 +588,16 @@
 		}
 		addDebug(`📤 sendMessage: "${finalText}"`);
 
+		// 대화 ID가 없으면 자동 생성
+		if (!currentConversationId) {
+			try {
+				const conv = await createConversation(finalText.substring(0, 30));
+				currentConversationId = conv.id;
+				await refreshConversationList();
+				addDebug(`새 대화 자동 생성: ${conv.id}`);
+			} catch (e) { addDebug(`대화 생성 실패: ${e}`); }
+		}
+
 		// 음악 재생 중이면 일시정지
 		if (musicVideoId) pauseMusic();
 
@@ -630,11 +640,11 @@
 							scrollToBottom();
 							if (fullResponse.length <= 30) addDebug(`📥 delta: "${delta}"`);
 
-							// TTS: 문장 단위로 즉시 재생 (문장부호 기준, 쉼표 제외)
+							// TTS: 문장 단위로 즉시 재생 (마이크 켜진 경우만)
 							sentenceBuffer += delta;
 							const sentenceEnd = sentenceBuffer.match(/[.!?。\n]/);
 							if (sentenceEnd && sentenceBuffer.trim().length > 10) {
-								tts?.addChunk(sentenceBuffer.trim());
+								if (conversation.micEnabled) tts?.addChunk(sentenceBuffer.trim());
 								sentenceBuffer = '';
 							}
 						},
@@ -642,7 +652,7 @@
 							addDebug(`✅ 응답완료: ${fullResponse.length}자`);
 							if (sentenceBuffer.trim()) {
 								addDebug(`🔊 TTS: "${sentenceBuffer.trim().substring(0, 30)}"`);
-								tts?.addChunk(sentenceBuffer.trim());
+								if (conversation.micEnabled) tts?.addChunk(sentenceBuffer.trim());
 							}
 							// Extract file URLs for download buttons
 							const fileUrls = extractFileUrls(fullResponse);
@@ -875,7 +885,7 @@
 	{#if showSidebar}
 		<div class="fixed inset-0 z-50 flex">
 			<div class="absolute inset-0 bg-black/60" onclick={() => showSidebar = false}></div>
-			<div class="relative w-72 max-w-[80vw] bg-gray-900 h-full flex flex-col shadow-2xl">
+			<div class="relative w-72 max-w-[80vw] bg-gray-900 h-full flex flex-col shadow-2xl" style="padding-top: env(safe-area-inset-top);">
 				<div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
 					<span class="font-semibold text-lg">💬 대화 목록</span>
 					<button onclick={startNewConversation} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors">+ 새 대화</button>
