@@ -16,12 +16,15 @@ interface StreamCallbacks {
 
 async function fetchOnce(url: string, init: RequestInit): Promise<Response> {
 	const controller = new AbortController();
-	const timeout = setTimeout(() => controller.abort(), 60000);
+	// SSE 스트리밍은 응답이 길 수 있으므로 연결 타임아웃만 5분으로 설정
+	const timeout = setTimeout(() => controller.abort(), 300000);
 	try {
 		const res = await fetch(url, { ...init, signal: controller.signal });
+		clearTimeout(timeout); // 연결 성공하면 타임아웃 해제 (스트리밍 중 끊김 방지)
 		return res;
-	} finally {
+	} catch (err) {
 		clearTimeout(timeout);
+		throw err;
 	}
 }
 

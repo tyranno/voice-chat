@@ -622,8 +622,13 @@
 
 	async function sendMessage(text?: string) {
 		const finalText = text || input.trim();
-		if (!finalText || isLoading) {
-			addDebug(`sendMessage 스킵: text="${text}" isLoading=${isLoading}`);
+		if (!finalText) return;
+
+		// 응답 중이면 큐잉 (텍스트 입력도 큐잉 가능)
+		if (isLoading) {
+			pendingMessage = finalText;
+			input = '';
+			addDebug(`📋 큐잉: "${finalText}" (응답 대기 중)`);
 			return;
 		}
 		addDebug(`📤 sendMessage: "${finalText}"`);
@@ -1147,16 +1152,15 @@
 					type="text"
 					bind:value={input}
 					onkeydown={handleKeydown}
-					placeholder="메시지를 입력하세요..."
-					disabled={isLoading}
-					class="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+					placeholder={isLoading ? "응답 중... (전송하면 대기열에 추가)" : "메시지를 입력하세요..."}
+					class="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
 				/>
 				<button
 					onclick={() => sendMessage()}
-					disabled={!input.trim() || isLoading}
+					disabled={!input.trim()}
 					class="px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-500 disabled:opacity-50 transition-colors"
 				>
-					전송
+					{isLoading ? '대기' : '전송'}
 				</button>
 			</div>
 		</div>
