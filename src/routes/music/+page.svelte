@@ -82,7 +82,7 @@
 	}
 </script>
 
-<div class="flex flex-col h-screen bg-gray-950 text-white">
+<div class="app-container bg-gray-950 text-white">
 	<!-- Header -->
 	<header class="flex items-center gap-3 px-4 py-3 bg-gray-900 border-b border-gray-800 flex-shrink-0">
 		<button

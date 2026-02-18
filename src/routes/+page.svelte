@@ -19,6 +19,7 @@
 		type ConversationMeta
 	} from '$lib/api/conversations';
 	import { onFcmNotification, type Notification } from '$lib/api/notifications';
+	import { addNotification } from '$lib/stores/notifications.svelte';
 	import { initMusicHistory, addToHistory, savePlaylist, getHistory, getPlaylists, deletePlaylist, type MusicPlaylist } from '$lib/stores/musicHistory.svelte';
 	import { registerFcmToken } from '$lib/api/fcm';
 
@@ -88,6 +89,7 @@
 	}
 	let messagesContainer: HTMLDivElement;
 	let showTextInput = $state(false);
+	let showDropdown = $state(false);
 
 	// Connection state
 	let appState = $state<'checking' | 'no-server' | 'select-instance' | 'no-instance' | 'connected'>('checking');
@@ -294,6 +296,7 @@
 		// Listen for FCM notifications (forwarded from native)
 		onFcmNotification((notif) => {
 			addDebug(`🔔 ${notif.title}: ${notif.message}`);
+			addNotification(notif);
 			const text = notif.title ? `${notif.title}. ${notif.message}` : notif.message;
 			if (tts && text && conversation.micEnabled) {
 				tts.speak(text);
@@ -879,42 +882,53 @@
 {:else}
 <!-- Connected — Chat UI -->
 <div class="app-container bg-gray-950 text-white">
-	<!-- Header -->
-	<header class="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800">
-		<div class="flex items-center gap-2">
+	<!-- Header (간소화) -->
+	<header class="flex-shrink-0 flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-800" style="padding-top: env(safe-area-inset-top);">
+		<div class="flex items-center gap-1.5">
 			<button
 				onclick={() => { showSidebar = !showSidebar; if (showSidebar) refreshConversationList(); }}
-				class="p-2 rounded-lg hover:bg-gray-800 transition-colors"
+				class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm"
 				title="대화 목록"
 			>☰</button>
 			<button
 				onclick={async () => { stt?.stop(); try { instances = await getInstances(); } catch {} appState = 'select-instance'; }}
-				class="flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors"
+				class="flex items-center gap-1 px-1.5 py-0.5 rounded-lg hover:bg-gray-800 transition-colors"
 				title="컴퓨터 변경"
 			>
-				<span class="text-xl">🦖</span>
-				<span class="font-semibold text-lg">{settings.getInstanceName(settings.selectedInstance, '렉스')}</span>
+				<span class="text-lg">🦖</span>
+				<span class="font-medium text-sm">{settings.getInstanceName(settings.selectedInstance, '렉스')}</span>
 			</button>
 			<span
-				class="text-xs px-2 py-0.5 rounded-full"
+				class="text-[10px] px-1.5 py-0.5 rounded-full"
 				style="background-color: {conversation.stateColor}20; color: {conversation.stateColor}"
 			>
 				{conversation.stateLabel}
 			</span>
 		</div>
-		<div class="flex items-center gap-2">
-			<button
-				onclick={startNewConversation}
-				class="p-2 rounded-lg hover:bg-gray-800 transition-colors text-sm"
-				title="새 대화"
-			>✏️</button>
-			<button
-				onclick={() => (showTextInput = !showTextInput)}
-				class="p-2 rounded-lg hover:bg-gray-800 transition-colors text-sm"
-				title="텍스트 입력 토글"
-			>⌨️</button>
-			<button onclick={() => goto('/music')} class="p-2 rounded-lg hover:bg-gray-800 transition-colors text-sm" title="음악">🎵</button>
-			<button onclick={() => goto('/settings')} class="p-2 rounded-lg hover:bg-gray-800 transition-colors">⚙️</button>
+		<div class="flex items-center gap-1">
+			<button onclick={() => { showTextInput = !showTextInput; }} class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm" title="텍스트 입력">⌨️</button>
+			<button onclick={() => goto('/settings')} class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm" title="설정">⚙️</button>
+			<div class="relative">
+				<button
+					onclick={() => showDropdown = !showDropdown}
+					class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm"
+					title="메뉴"
+				>⋯</button>
+				{#if showDropdown}
+					<div class="fixed inset-0 z-40" onclick={() => showDropdown = false}></div>
+					<div class="absolute right-0 top-full mt-1 z-50 w-44 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+						<button onclick={() => { showDropdown = false; startNewConversation(); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
+							<span>✏️</span><span>새 대화</span>
+						</button>
+						<button onclick={() => { showDropdown = false; goto('/notifications'); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
+							<span>🔔</span><span>알림</span>
+						</button>
+						<button onclick={() => { showDropdown = false; goto('/music'); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
+							<span>🎵</span><span>음악</span>
+						</button>
+					</div>
+				{/if}
+			</div>
 		</div>
 	</header>
 
@@ -1017,39 +1031,39 @@
 		{/each}
 	</div>
 
-	<!-- Waveform + Interim -->
-	<div class="px-4 py-2 space-y-2">
+	<!-- Waveform + Interim (고정 영역 - 겹침 방지) -->
+	<div class="flex-shrink-0 px-4 py-2 space-y-1 bg-gray-950" style="padding-bottom: env(safe-area-inset-bottom);">
 		{#if sttError}
-			<div class="text-center text-sm text-red-400 bg-red-900/30 rounded-lg px-3 py-2">
+			<div class="text-center text-xs text-red-400 bg-red-900/30 rounded-lg px-2 py-1.5">
 				⚠️ {sttError}
-				<button onclick={() => sttError = ''} class="ml-2 text-red-300 hover:text-white">✕</button>
+				<button onclick={() => sttError = ''} class="ml-1 text-red-300 hover:text-white">✕</button>
 			</div>
 		{/if}
 		
 		{#if conversation.interimText}
-			<div class="text-center text-sm text-gray-400 italic truncate">
+			<div class="text-center text-xs text-gray-400 italic truncate px-2">
 				"{conversation.interimText}"
 			</div>
 		{/if}
 
 		<div
-			class="flex items-center justify-center h-16 rounded-xl border transition-colors duration-300"
+			class="flex items-center justify-center h-12 rounded-xl border transition-colors duration-300"
 			style="background-color: {conversation.stateColor}08; border-color: {conversation.stateColor}30"
 		>
-			<div class="flex items-end gap-[3px] h-10">
+			<div class="flex items-end gap-[3px] h-8">
 				{#each waveformBars as height}
 					<div
-						class="w-[3px] rounded-full transition-all duration-75"
-						style="height: {height}px; background-color: {conversation.stateColor}"
+						class="w-[2px] rounded-full transition-all duration-75"
+						style="height: {Math.min(height, 28)}px; background-color: {conversation.stateColor}"
 					></div>
 				{/each}
 			</div>
 		</div>
 
-		<div class="flex justify-center pb-4">
+		<div class="flex justify-center pb-2">
 			<button
 				onclick={toggleMic}
-				class="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all duration-300 {conversation.micEnabled
+				class="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all duration-300 {conversation.micEnabled
 					? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-600/30 scale-110'
 					: 'bg-gray-700 hover:bg-gray-600'}"
 			>
