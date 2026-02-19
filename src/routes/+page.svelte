@@ -104,7 +104,7 @@
 	let debugLog = $state('');
 	let finalBuffer = '';
 	let finalTimer: ReturnType<typeof setTimeout> | null = null;
-	const FINAL_DEBOUNCE_MS = 3000;  // 서버 silence 2.0s + Google API 응답 + 여유
+	const FINAL_DEBOUNCE_MS = 1000;  // final 결과 후 1초 대기 (추가 음성 없으면 전송)
 
 	let pendingMessage = '';
 
@@ -154,6 +154,8 @@
 			const loaded = await getMessages(id);
 			messages = loaded.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 			currentConversationId = id;
+			// 대화 로드 후 맨 아래로 스크롤
+			setTimeout(() => scrollToBottom(), 100);
 		} catch (e) { addDebug(`대화 로드 실패: ${e}`); }
 		showSidebar = false;
 	}
@@ -247,6 +249,7 @@
 				const loaded = await getMessages(currentConversationId);
 				if (loaded.length > 0) {
 					messages = loaded.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+					setTimeout(() => scrollToBottom(), 100);
 				}
 			}
 		} catch {}
@@ -312,6 +315,7 @@
 				if (loaded.length > 0) {
 					messages = loaded.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 					addDebug(`대화 복원: ${loaded.length}개 메시지`);
+					setTimeout(() => scrollToBottom(), 100);
 				}
 			}
 		} catch (e) { addDebug(`대화 목록 로드: ${e}`); }
@@ -359,8 +363,10 @@
 				if (musicVideoId && text.trim()) pauseMusic();
 			},
 			onFinal: (text: string) => {
-				if (text.trim()) {
-					finalBuffer += (finalBuffer ? ' ' : '') + text.trim();
+				const trimmed = text.trim();
+				// 빈 결과 및 placeholder 필터링
+				if (trimmed && trimmed !== '인식 중...' && trimmed !== '인식 중') {
+					finalBuffer += (finalBuffer ? ' ' : '') + trimmed;
 					conversation.interimText = finalBuffer;
 					if (finalTimer) clearTimeout(finalTimer);
 					finalTimer = setTimeout(flushFinalBuffer, FINAL_DEBOUNCE_MS);
@@ -681,7 +687,7 @@
 					{
 						onDelta: (delta) => {
 							fullResponse += delta;
-							messages[assistantIdx].content = fullResponse;
+							messages[assistantIdx] = { ...messages[assistantIdx], content: fullResponse };
 							scrollToBottom();
 							if (fullResponse.length <= 30) addDebug(`📥 delta: "${delta}"`);
 

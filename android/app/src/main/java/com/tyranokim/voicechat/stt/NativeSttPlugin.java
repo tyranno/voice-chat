@@ -44,6 +44,8 @@ public class NativeSttPlugin extends Plugin {
 
     private volatile boolean isRunning = false;
     private volatile boolean isPaused = false;
+    private volatile boolean wasConnected = false;  // 한번이라도 연결 성공했는지
+    private volatile int reconnectCount = 0;
     private String serverUrl = "";
 
     // 중복 결과 방지
@@ -210,6 +212,8 @@ public class NativeSttPlugin extends Plugin {
             @Override
             public void onOpen(WebSocket ws, Response response) {
                 Log.d(TAG, "WebSocket connected");
+                wasConnected = true;
+                reconnectCount = 0;
                 // Start recording after WebSocket is open
                 if (audioRecord == null) {
                     Log.e(TAG, "audioRecord is null on WebSocket open, aborting");
@@ -283,10 +287,17 @@ public class NativeSttPlugin extends Plugin {
             @Override
             public void onFailure(WebSocket ws, Throwable t, Response response) {
                 Log.e(TAG, "WebSocket failed: " + t.getMessage());
-                emitError("STT 서버 연결 실패");
-                // Auto-reconnect after 2 seconds
+                reconnectCount++;
+                // 첫 연결 자체가 실패한 경우에만 에러 표시
+                if (!wasConnected && reconnectCount >= 3) {
+                    emitError("STT 서버 연결 실패: " + t.getMessage());
+                } else {
+                    Log.d(TAG, "STT reconnecting silently... (attempt " + reconnectCount + ")");
+                }
+                // Auto-reconnect after delay (exponential backoff, max 10s)
                 if (isRunning) {
-                    try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                    long delay = Math.min(1000L * reconnectCount, 10000L);
+                    try { Thread.sleep(delay); } catch (InterruptedException ignored) {}
                     if (isRunning) {
                         Log.d(TAG, "Reconnecting...");
                         if (getActivity() != null) {
@@ -330,6 +341,8 @@ public class NativeSttPlugin extends Plugin {
     private void stopRecording() {
         isRunning = false;
         isPaused = false;
+        wasConnected = false;
+        reconnectCount = 0;
 
         if (webSocket != null) {
             try {
