@@ -1,11 +1,21 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount, onDestroy } from 'svelte';
+	import { Capacitor } from '@capacitor/core';
+	import {
+		play as bgPlay, pause as bgPause, resume as bgResume, stop as bgStop,
+		next as bgNext, prev as bgPrev, seek as bgSeek, onStatus as bgOnStatus
+	} from '$lib/audio/backgroundAudio';
 
 	function onBackPress() { goto('/'); }
-	onDestroy(() => window.removeEventListener('hardwareBackPress', onBackPress));
+	onDestroy(() => {
+		window.removeEventListener('hardwareBackPress', onBackPress);
+		removeBgListener?.();
+	});
 	import { page } from '$app/state';
 	import { initMusicHistory, addToHistory, savePlaylist, getHistory, getPlaylists, deletePlaylist, clearHistory, type MusicPlaylist, type MusicHistoryItem } from '$lib/stores/musicHistory.svelte';
+
+	const isNative = Capacitor.isNativePlatform();
 
 	let query = $state('');
 	let searchResults = $state<Array<{ videoId: string; title: string; thumbnail: string }>>([]);
@@ -17,20 +27,46 @@
 	let historyItems = $state<MusicHistoryItem[]>([]);
 	let savedPlaylists = $state<MusicPlaylist[]>([]);
 
+	// Native-only state
+	let isResolving = $state(false);
+	let bgPlaying = $state(false);
+	let bgBuffering = $state(false);
+	let bgError = $state('');
+	let bgIndex = $state(0);
+	let bgHasNext = $state(false);
+	let bgHasPrev = $state(false);
+	let bgPositionMs = $state(0);
+	let bgDurationMs = $state(0);
+	let removeBgListener: (() => void) | null = null;
+
 	function refreshData() {
 		historyItems = getHistory();
 		savedPlaylists = getPlaylists();
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		window.addEventListener('hardwareBackPress', onBackPress);
 		initMusicHistory();
 		refreshData();
 		const autoplay = page.url.searchParams.get('autoplay');
 		const title = page.url.searchParams.get('title');
 		if (autoplay) {
-			currentVideoId = autoplay;
-			currentTitle = title || '';
+			await playVideo(autoplay, title || '');
+		}
+
+		// Listen to native background audio status
+		if (isNative) {
+			removeBgListener = await bgOnStatus((s) => {
+				bgPlaying = s.playing;
+				bgBuffering = s.buffering ?? false;
+				bgHasNext = s.hasNext ?? false;
+				bgHasPrev = s.hasPrev ?? false;
+				if (s.index !== undefined) bgIndex = s.index;
+				if (s.error) bgError = s.error;
+				if (s.title) currentTitle = s.title;
+				if (typeof s.positionMs === 'number') bgPositionMs = Math.max(0, s.positionMs);
+				if (typeof s.durationMs === 'number') bgDurationMs = Math.max(0, s.durationMs);
+			});
 		}
 	});
 
@@ -42,7 +78,6 @@
 
 		try {
 			const encoded = encodeURIComponent(query.trim());
-			// Use server proxy for reliable YouTube search
 			const res = await fetch(`https://voicechat.tyranno.xyz/api/youtube/search?q=${encoded}`);
 			if (!res.ok) throw new Error('검색 실패');
 			const data = await res.json();
@@ -50,7 +85,6 @@
 			if (searchResults.length === 0) {
 				searchError = '검색 결과가 없습니다.';
 			} else {
-				// 검색 결과를 플레이리스트로 자동 저장
 				savePlaylist(query.trim(), searchResults.map(r => ({ videoId: r.videoId, title: r.title })));
 				refreshData();
 			}
@@ -61,13 +95,54 @@
 		}
 	}
 
-	function playVideo(videoId: string, title?: string) {
+	async function playVideo(videoId: string, title?: string) {
 		currentVideoId = videoId;
-		if (title) {
-			currentTitle = title;
-			addToHistory(videoId, title);
-			refreshData();
+		currentTitle = title || '';
+		if (title) { addToHistory(videoId, title); refreshData(); }
+
+		if (!isNative) return; // web: iframe handles it
+
+		// Native: pass YouTube watch URLs to plugin (plugin resolves to playable stream)
+		isResolving = true;
+		bgError = '';
+		try {
+			const playlist = searchResults.length > 1
+				? searchResults.map(r => ({ videoId: r.videoId, title: r.title }))
+				: [{ videoId, title: title || '' }];
+			const idx = playlist.findIndex(r => r.videoId === videoId);
+			const safeIdx = idx >= 0 ? idx : 0;
+			const watchUrls = playlist.map((r) => `https://www.youtube.com/watch?v=${encodeURIComponent(r.videoId)}`);
+
+			await bgPlay({
+				url: watchUrls[safeIdx],
+				title: title || videoId,
+				artist: 'YouTube',
+				playlist: watchUrls,
+				index: safeIdx
+			});
+		} catch (e: any) {
+			bgError = `스트림 오류: ${e.message}`;
+		} finally {
+			isResolving = false;
 		}
+	}
+
+	function fmtTime(ms: number) {
+		const totalSec = Math.max(0, Math.floor(ms / 1000));
+		const m = Math.floor(totalSec / 60);
+		const s = totalSec % 60;
+		return `${m}:${String(s).padStart(2, '0')}`;
+	}
+
+	async function onSeekInput(e: Event) {
+		const value = Number((e.target as HTMLInputElement).value || 0);
+		bgPositionMs = value;
+	}
+
+	async function onSeekCommit(e: Event) {
+		const value = Number((e.target as HTMLInputElement).value || 0);
+		bgPositionMs = value;
+		await bgSeek(value).catch(() => {});
 	}
 
 	function loadPlaylist(pl: MusicPlaylist) {
@@ -114,16 +189,59 @@
 	<!-- Player -->
 	{#if currentVideoId}
 		<div class="px-4 pb-3 flex-shrink-0">
-			<div class="relative w-full rounded-xl overflow-hidden" style="padding-bottom: 56.25%;">
-				<iframe
-					src="https://www.youtube.com/embed/{currentVideoId}?autoplay=1&rel=0"
-					title="YouTube player"
-					class="absolute inset-0 w-full h-full"
-					frameborder="0"
-					allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-					allowfullscreen
-				></iframe>
-			</div>
+			{#if isNative}
+				<!-- Native: ExoPlayer background audio (works with screen off) -->
+				<div class="rounded-xl bg-gray-800/80 border border-gray-700 p-4">
+					<div class="flex items-center gap-3 mb-3">
+						<span class="text-2xl">{bgBuffering ? '⏳' : bgPlaying ? '🎵' : '⏸'}</span>
+						<div class="flex-1 min-w-0">
+							<p class="text-sm font-medium truncate">{currentTitle || currentVideoId}</p>
+							<p class="text-xs text-gray-400">{isResolving ? '스트림 로딩 중...' : bgBuffering ? '버퍼링...' : bgPlaying ? '재생 중 (화면 꺼도 계속 재생)' : '일시정지'}</p>
+						</div>
+					</div>
+					{#if bgError}
+						<p class="text-xs text-red-400 mb-2">{bgError}</p>
+					{/if}
+					<div class="mb-3">
+						<input
+							type="range"
+							min="0"
+							max={Math.max(1, bgDurationMs)}
+							value={Math.min(bgPositionMs, Math.max(1, bgDurationMs))}
+							oninput={onSeekInput}
+							onchange={onSeekCommit}
+							class="w-full accent-blue-500"
+							disabled={bgDurationMs <= 0}
+						/>
+						<div class="mt-1 flex items-center justify-between text-[11px] text-gray-400">
+							<span>{fmtTime(bgPositionMs)}</span>
+							<span>{fmtTime(bgDurationMs)}</span>
+						</div>
+					</div>
+					<div class="flex items-center justify-center gap-6">
+						<button onclick={() => bgPrev()} disabled={!bgHasPrev} class="p-2 rounded-full disabled:opacity-30 hover:bg-gray-700 transition-colors text-xl">⏮</button>
+						{#if bgPlaying}
+							<button onclick={() => bgPause()} class="p-3 rounded-full bg-blue-600 hover:bg-blue-700 transition-colors text-xl">⏸</button>
+						{:else}
+							<button onclick={() => bgResume()} disabled={isResolving} class="p-3 rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors text-xl">▶</button>
+						{/if}
+						<button onclick={() => bgNext()} disabled={!bgHasNext} class="p-2 rounded-full disabled:opacity-30 hover:bg-gray-700 transition-colors text-xl">⏭</button>
+						<button onclick={() => bgStop()} class="p-2 rounded-full hover:bg-gray-700 transition-colors text-lg">⏹</button>
+					</div>
+				</div>
+			{:else}
+				<!-- Web: YouTube iframe -->
+				<div class="relative w-full rounded-xl overflow-hidden" style="padding-bottom: 56.25%;">
+					<iframe
+						src="https://www.youtube.com/embed/{currentVideoId}?autoplay=1&rel=0"
+						title="YouTube player"
+						class="absolute inset-0 w-full h-full"
+						frameborder="0"
+						allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+						allowfullscreen
+					></iframe>
+				</div>
+			{/if}
 		</div>
 	{/if}
 

@@ -22,6 +22,11 @@
 	import { addNotification } from '$lib/stores/notifications.svelte';
 	import { initMusicHistory, addToHistory, savePlaylist, getHistory, getPlaylists, deletePlaylist, type MusicPlaylist } from '$lib/stores/musicHistory.svelte';
 	import { registerFcmToken } from '$lib/api/fcm';
+	import {
+		play as bgPlay, pause as bgPause, resume as bgResume,
+		stop as bgStop, next as bgNext, prev as bgPrev,
+		onStatus as bgOnStatus
+	} from '$lib/audio/backgroundAudio';
 
 	interface DownloadInfo {
 		url: string;
@@ -47,9 +52,11 @@
 	let musicTitle = $state('');
 	let musicIframe: HTMLIFrameElement | null = null;
 	let musicExpanded = $state(false);
-	let musicPlaylist = $state<Array<{ videoId: string; title: string }>>([]);
+	let musicPlaylist = $state<Array<{ videoId: string; title: string; audioUrl?: string }>>([]);
 	let musicIndex = $state(0);
 	let musicSpeed = $state(1.0);
+	let isNativeMusicPlatform = $state(Capacitor.isNativePlatform());
+	let removeBgStatusListener: (() => void) | null = null;
 
 	function musicCommand(cmd: string, args: any[] = []) {
 		if (!musicIframe?.contentWindow) return;
@@ -66,25 +73,43 @@
 		musicCommand('setPlaybackRate', [rate]);
 	}
 
-	function playMusicFromPlaylist(index: number) {
+	async function playMusicFromPlaylist(index: number) {
 		if (index < 0 || index >= musicPlaylist.length) return;
 		musicIndex = index;
 		const item = musicPlaylist[index];
-		musicVideoId = item.videoId;
 		musicTitle = item.title;
 		musicSpeed = 1.0;
 		addToHistory(item.videoId, item.title);
-	}
-
-	function nextTrack() {
-		if (musicIndex < musicPlaylist.length - 1) {
-			playMusicFromPlaylist(musicIndex + 1);
+		if (isNativeMusicPlatform) {
+			const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(item.videoId)}`;
+			try {
+				await bgPlay({
+					url: watchUrl,
+					title: item.title,
+					artist: 'YouTube',
+					playlist: musicPlaylist.map((t) => `https://www.youtube.com/watch?v=${encodeURIComponent(t.videoId)}`),
+					index
+				});
+			} catch (e) {
+				addDebug(`[BgAudio] play error: ${e}`);
+				musicVideoId = item.videoId; // fallback to iframe
+			}
+		} else {
+			musicVideoId = item.videoId;
 		}
 	}
 
-	function prevTrack() {
+	async function nextTrack() {
+		if (isNativeMusicPlatform) { await bgNext().catch(() => {}); return; }
+		if (musicIndex < musicPlaylist.length - 1) {
+			await playMusicFromPlaylist(musicIndex + 1);
+		}
+	}
+
+	async function prevTrack() {
+		if (isNativeMusicPlatform) { await bgPrev().catch(() => {}); return; }
 		if (musicIndex > 0) {
-			playMusicFromPlaylist(musicIndex - 1);
+			await playMusicFromPlaylist(musicIndex - 1);
 		}
 	}
 	let messagesContainer: HTMLDivElement;
