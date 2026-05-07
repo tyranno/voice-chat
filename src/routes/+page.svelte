@@ -1177,7 +1177,7 @@
 
 	<!-- Text input (toggle) -->
 	{#if showTextInput}
-		<div class="px-4 pb-4 pt-2">
+		<div class="flex-shrink-0 px-4 pb-4 pt-2">
 			<div class="flex gap-2">
 				<input
 					type="text"
