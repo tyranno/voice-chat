@@ -175,12 +175,12 @@
 			bind:value={query}
 			onkeydown={handleKeydown}
 			placeholder="노래 검색..."
-			class="flex-1 px-4 py-2.5 rounded-xl bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+			class="flex-1 px-4 py-2.5 rounded-xl bg-gray-800 border border-gray-700 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
 		/>
 		<button
 			onclick={searchYouTube}
 			disabled={isSearching}
-			class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors font-medium"
+			class="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 transition-colors font-medium"
 		>
 			{isSearching ? '...' : '🔍'}
 		</button>
@@ -210,7 +210,7 @@
 							value={Math.min(bgPositionMs, Math.max(1, bgDurationMs))}
 							oninput={onSeekInput}
 							onchange={onSeekCommit}
-							class="w-full accent-blue-500"
+							class="w-full accent-emerald-500"
 							disabled={bgDurationMs <= 0}
 						/>
 						<div class="mt-1 flex items-center justify-between text-[11px] text-gray-400">
@@ -221,9 +221,9 @@
 					<div class="flex items-center justify-center gap-6">
 						<button onclick={() => bgPrev()} disabled={!bgHasPrev} class="p-2 rounded-full disabled:opacity-30 hover:bg-gray-700 transition-colors text-xl">⏮</button>
 						{#if bgPlaying}
-							<button onclick={() => bgPause()} class="p-3 rounded-full bg-blue-600 hover:bg-blue-700 transition-colors text-xl">⏸</button>
+							<button onclick={() => bgPause()} class="p-3 rounded-full bg-emerald-500 hover:bg-emerald-600 transition-colors text-xl">⏸</button>
 						{:else}
-							<button onclick={() => bgResume()} disabled={isResolving} class="p-3 rounded-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 transition-colors text-xl">▶</button>
+							<button onclick={() => bgResume()} disabled={isResolving} class="p-3 rounded-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 transition-colors text-xl">▶</button>
 						{/if}
 						<button onclick={() => bgNext()} disabled={!bgHasNext} class="p-2 rounded-full disabled:opacity-30 hover:bg-gray-700 transition-colors text-xl">⏭</button>
 						<button onclick={() => bgStop()} class="p-2 rounded-full hover:bg-gray-700 transition-colors text-lg">⏹</button>
@@ -247,9 +247,9 @@
 
 	<!-- Tabs -->
 	<div class="flex gap-1 px-4 pb-2 flex-shrink-0">
-		<button onclick={() => showTab = 'search'} class="px-3 py-1.5 text-xs rounded-lg transition-colors {showTab === 'search' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}">🔍 검색</button>
-		<button onclick={() => { showTab = 'history'; refreshData(); }} class="px-3 py-1.5 text-xs rounded-lg transition-colors {showTab === 'history' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}">⏱ 최근</button>
-		<button onclick={() => { showTab = 'playlists'; refreshData(); }} class="px-3 py-1.5 text-xs rounded-lg transition-colors {showTab === 'playlists' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400'}">📋 리스트</button>
+		<button onclick={() => showTab = 'search'} class="px-3 py-1.5 text-xs rounded-lg transition-colors {showTab === 'search' ? 'bg-emerald-500 text-white' : 'bg-gray-800 text-gray-400'}">🔍 검색</button>
+		<button onclick={() => { showTab = 'history'; refreshData(); }} class="px-3 py-1.5 text-xs rounded-lg transition-colors {showTab === 'history' ? 'bg-emerald-500 text-white' : 'bg-gray-800 text-gray-400'}">⏱ 최근</button>
+		<button onclick={() => { showTab = 'playlists'; refreshData(); }} class="px-3 py-1.5 text-xs rounded-lg transition-colors {showTab === 'playlists' ? 'bg-emerald-500 text-white' : 'bg-gray-800 text-gray-400'}">📋 리스트</button>
 	</div>
 
 	<!-- Content -->
@@ -270,7 +270,7 @@
 				{#each searchResults as result}
 					<button
 						onclick={() => playVideo(result.videoId, result.title)}
-						class="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-gray-800/70 transition-colors text-left {currentVideoId === result.videoId ? 'bg-blue-900/30 border border-blue-700' : ''}"
+						class="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-gray-800/70 transition-colors text-left {currentVideoId === result.videoId ? 'bg-emerald-900/30 border border-emerald-700' : ''}"
 					>
 						<img src={result.thumbnail} alt="" class="w-24 h-16 rounded-lg object-cover flex-shrink-0 bg-gray-800" />
 						<span class="text-sm line-clamp-2">{result.title}</span>
@@ -294,7 +294,7 @@
 					{#each historyItems as item}
 						<button
 							onclick={() => playVideo(item.videoId, item.title)}
-							class="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-gray-800/70 transition-colors text-left {currentVideoId === item.videoId ? 'bg-blue-900/30 border border-blue-700' : ''}"
+							class="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-gray-800/70 transition-colors text-left {currentVideoId === item.videoId ? 'bg-emerald-900/30 border border-emerald-700' : ''}"
 						>
 							<img src={`https://i.ytimg.com/vi/${item.videoId}/mqdefault.jpg`} alt="" class="w-24 h-16 rounded-lg object-cover flex-shrink-0 bg-gray-800" />
 							<div class="flex-1 min-w-0">

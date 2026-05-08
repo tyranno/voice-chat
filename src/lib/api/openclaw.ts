@@ -2,6 +2,7 @@
  * Chat client — streams via VoiceChat server relay to OpenClaw bridge
  */
 import { settings } from '$lib/stores/settings.svelte';
+import { toast } from '$lib/stores/toast.svelte';
 
 interface Message {
 	role: 'user' | 'assistant' | 'system';
@@ -56,8 +57,10 @@ export async function streamChat(messages: Message[], callbacks: StreamCallbacks
 				const { getInstances } = await import('./instances');
 				const instances = await getInstances();
 				if (instances.length > 0) {
+					const newName = settings.getInstanceName(instances[0].id, instances[0].name);
 					settings.selectedInstance = instances[0].id;
 					console.log(`[VoiceChat] Instance auto-recovered: ${instances[0].id}`);
+					toast.info(`인스턴스 재연결됨: ${newName}`);
 					// Retry with new instance (limited depth)
 					return streamChat(messages, callbacks, retryDepth + 1, conversationId);
 				}

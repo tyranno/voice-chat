@@ -13,7 +13,7 @@ async function getPlugin() {
 	if (!Capacitor.isNativePlatform()) return null;
 
 	try {
-		const mod = await import('@capacitor/local-notifications');
+		const mod = await import(/* @vite-ignore */ '@capacitor/local-notifications' as string);
 		LocalNotifications = mod.LocalNotifications;
 
 		// 권한 요청

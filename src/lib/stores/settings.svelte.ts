@@ -11,6 +11,8 @@ interface Settings {
 	ttsEngine: 'native' | 'webspeech' | 'elevenlabs';
 	sttEngine: 'webspeech' | 'deepgram';
 	language: string;
+	onboardingDone: boolean;
+	developerMode: boolean;
 }
 
 const defaults: Settings = {
@@ -19,7 +21,9 @@ const defaults: Settings = {
 	instanceNames: {},
 	ttsEngine: 'native',
 	sttEngine: 'webspeech',
-	language: 'ko-KR'
+	language: 'ko-KR',
+	onboardingDone: false,
+	developerMode: false
 };
 
 function load(): Settings {
@@ -72,6 +76,12 @@ class SettingsStore {
 
 	get language() { return this.#settings.language; }
 	set language(v: string) { this.#settings.language = v; save(this.#settings); }
+
+	get onboardingDone() { return this.#settings.onboardingDone; }
+	set onboardingDone(v: boolean) { this.#settings.onboardingDone = v; save(this.#settings); }
+
+	get developerMode() { return this.#settings.developerMode; }
+	set developerMode(v: boolean) { this.#settings.developerMode = v; save(this.#settings); }
 
 	get healthEndpoint() { return `${this.serverUrl}/health`; }
 	get instancesEndpoint() { return `${this.serverUrl}/api/instances`; }

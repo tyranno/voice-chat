@@ -11,7 +11,7 @@
 	import { WebSpeechTTS } from '$lib/tts/webspeech';
 	import { CapacitorTTS } from '$lib/tts/capacitor';
 	import { CloudTTS } from '$lib/tts/cloud';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { extractFileUrls, downloadFile } from '$lib/api/downloader';
 	import {
 		listConversations, createConversation, getMessages,
@@ -27,6 +27,16 @@
 		stop as bgStop, next as bgNext, prev as bgPrev,
 		onStatus as bgOnStatus
 	} from '$lib/audio/backgroundAudio';
+	import AppHeader from '$lib/components/AppHeader.svelte';
+	import ConversationSidebar from '$lib/components/ConversationSidebar.svelte';
+	import MessageList from '$lib/components/MessageList.svelte';
+	import MicControl from '$lib/components/MicControl.svelte';
+	import MusicMiniPlayer from '$lib/components/MusicMiniPlayer.svelte';
+	import TextInputBar from '$lib/components/TextInputBar.svelte';
+	import ExitConfirmDialog from '$lib/components/ExitConfirmDialog.svelte';
+	import DebugPanel from '$lib/components/DebugPanel.svelte';
+	import { debug as debugStore } from '$lib/stores/debug.svelte';
+	import { toast } from '$lib/stores/toast.svelte';
 
 	interface DownloadInfo {
 		url: string;
@@ -50,7 +60,7 @@
 	let conversationList = $state<ConversationMeta[]>([]);
 	let musicVideoId = $state<string | null>(null);
 	let musicTitle = $state('');
-	let musicIframe: HTMLIFrameElement | null = null;
+	let musicIframe: HTMLIFrameElement | null = $state(null);
 	let musicExpanded = $state(false);
 	let musicPlaylist = $state<Array<{ videoId: string; title: string; audioUrl?: string }>>([]);
 	let musicIndex = $state(0);
@@ -112,7 +122,7 @@
 			await playMusicFromPlaylist(musicIndex - 1);
 		}
 	}
-	let messagesContainer: HTMLDivElement;
+	let messagesContainer: HTMLDivElement | undefined = $state();
 	let showTextInput = $state(false);
 	let showDropdown = $state(false);
 
@@ -158,7 +168,7 @@
 	function addDebug(msg: string) {
 		const t = new Date().toLocaleTimeString('ko-KR');
 		debugLog = `[${t}] ${msg}\n${debugLog}`.slice(0, 2000);
-		console.log(`[VoiceChat] ${msg}`);
+		debugStore.add(msg);
 	}
 
 	async function persistMessages() {
@@ -206,9 +216,10 @@
 	}
 
 	function scrollToBottom() {
-		if (messagesContainer) {
+		const el = messagesContainer;
+		if (el) {
 			requestAnimationFrame(() => {
-				messagesContainer.scrollTop = messagesContainer.scrollHeight;
+				el.scrollTop = el.scrollHeight;
 			});
 		}
 	}
@@ -283,13 +294,21 @@
 			conversation.micEnabled = true;
 			conversation.setListening();
 			addDebug('[VoiceChat] 마이크 자동 시작');
-			stt.start().catch((e: any) => console.warn('[VoiceChat] Auto-mic failed:', e));
+			Promise.resolve(stt.start()).catch((e: any) => console.warn('[VoiceChat] Auto-mic failed:', e));
 		}
 	}
 
 	let showExitConfirm = $state(false);
 
-	onMount(async () => {
+	let cleanupFn: (() => void) | null = null;
+	onDestroy(() => { cleanupFn?.(); cleanupFn = null; });
+
+	onMount(() => { (async () => {
+		// First-run gating: 온보딩 미완료 시 /onboarding으로 이동
+		if (!settings.onboardingDone) {
+			goto('/onboarding');
+			return;
+		}
 		// 뒤로가기 버튼 처리 (네이티브 hardwareBackPress 이벤트)
 		window.addEventListener('hardwareBackPress', () => {
 			if (showExitConfirm) {
@@ -443,7 +462,7 @@
 			// STT가 실제로 죽어있을 때만 재시작
 			if (stt && !stt.isListening) {
 				addDebug('[Guardian] STT dead — restarting');
-				stt.start().catch((e) => {
+				Promise.resolve(stt.start()).catch((e: any) => {
 					console.warn('[Guardian] Restart failed:', e);
 				});
 			}
@@ -477,7 +496,7 @@
 			}
 		}
 
-		return () => {
+		cleanupFn = () => {
 			console.log('[VoiceChat] Cleanup');
 			cancelAnimationFrame(animFrame);
 			clearInterval(micGuardian);
@@ -493,7 +512,7 @@
 			appState = 'no-server';
 			connectionError = `초기화 에러: ${e}`;
 		}
-	});
+	})(); });
 
 	function playBeep(freq: number, duration: number) {
 		try {
@@ -825,7 +844,7 @@
 	<div class="flex gap-3">
 		<button
 			onclick={() => goto('/settings')}
-			class="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors"
+			class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 rounded-xl font-medium transition-colors"
 		>
 			⚙️ 서버 설정
 		</button>
@@ -850,7 +869,7 @@
 	<div class="flex gap-3">
 		<button
 			onclick={checkConnection}
-			class="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors"
+			class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 rounded-xl font-medium transition-colors"
 		>
 			🔄 새로고침
 		</button>
@@ -888,7 +907,7 @@
 							type="text"
 							value={customName}
 							onchange={(e) => settings.setInstanceName(inst.id, (e.target as HTMLInputElement).value || inst.name)}
-							class="bg-transparent text-white font-medium text-lg border-b border-transparent focus:border-blue-500 outline-none w-full"
+							class="bg-transparent text-white font-medium text-lg border-b border-transparent focus:border-emerald-500 outline-none w-full"
 							placeholder={inst.name}
 						/>
 						<p class="text-sm text-gray-400 mt-1">
@@ -898,7 +917,7 @@
 				</div>
 				<button
 					onclick={() => selectInstance(inst.id)}
-					class="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors"
+					class="w-full px-4 py-2.5 bg-emerald-500 hover:bg-emerald-400 rounded-lg font-medium transition-colors"
 				>
 					연결하기
 				</button>
@@ -916,307 +935,83 @@
 </div>
 
 {:else}
-<!-- Connected — Chat UI -->
+<!-- Connected - Chat UI -->
 <div class="app-container bg-gray-950 text-white">
-	<!-- Header (간소화) -->
-	<header class="flex-shrink-0 flex items-center justify-between px-3 py-2 bg-gray-900 border-b border-gray-800" style="padding-top: env(safe-area-inset-top);">
-		<div class="flex items-center gap-1.5">
-			<button
-				onclick={() => { showSidebar = !showSidebar; if (showSidebar) refreshConversationList(); }}
-				class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm"
-				title="대화 목록"
-			>☰</button>
-			<button
-				onclick={async () => { stt?.stop(); try { instances = await getInstances(); } catch {} appState = 'select-instance'; }}
-				class="flex items-center gap-1 px-1.5 py-0.5 rounded-lg hover:bg-gray-800 transition-colors"
-				title="컴퓨터 변경"
-			>
-				<span class="text-lg">🦖</span>
-				<span class="font-medium text-sm">{settings.getInstanceName(settings.selectedInstance, '렉스')}</span>
-			</button>
-			<span
-				class="text-[10px] px-1.5 py-0.5 rounded-full"
-				style="background-color: {conversation.stateColor}20; color: {conversation.stateColor}"
-			>
-				{conversation.stateLabel}
-			</span>
-		</div>
-		<div class="flex items-center gap-1">
-			<button onclick={() => { showTextInput = !showTextInput; }} class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm" title="텍스트 입력">⌨️</button>
-			<button onclick={() => goto('/settings')} class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm" title="설정">⚙️</button>
-			<div class="relative">
-				<button
-					onclick={() => showDropdown = !showDropdown}
-					class="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-sm"
-					title="메뉴"
-				>⋯</button>
-				{#if showDropdown}
-					<div class="fixed inset-0 z-40" onclick={() => showDropdown = false}></div>
-					<div class="absolute right-0 top-full mt-1 z-50 w-44 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
-						<button onclick={() => { showDropdown = false; startNewConversation(); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
-							<span>✏️</span><span>새 대화</span>
-						</button>
-						<button onclick={() => { showDropdown = false; goto('/notifications'); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
-							<span>🔔</span><span>알림</span>
-						</button>
-						<button onclick={() => { showDropdown = false; goto('/music'); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
-							<span>🎵</span><span>음악</span>
-						</button>
-					</div>
-				{/if}
-			</div>
-		</div>
-	</header>
+	<AppHeader
+		instanceLabel={settings.getInstanceName(settings.selectedInstance, '렉스')}
+		{conversation}
+		{showDropdown}
+		onToggleSidebar={() => { showSidebar = !showSidebar; if (showSidebar) refreshConversationList(); }}
+		onChangeInstance={async () => { stt?.stop(); try { instances = await getInstances(); } catch {} appState = 'select-instance'; }}
+		onToggleTextInput={() => (showTextInput = !showTextInput)}
+		onOpenSettings={() => goto('/settings')}
+		onToggleDropdown={() => (showDropdown = !showDropdown)}
+		onCloseDropdown={() => (showDropdown = false)}
+		onNewConversation={startNewConversation}
+		onOpenNotifications={() => goto('/notifications')}
+		onOpenMusic={() => goto('/music')}
+	/>
 
-	<!-- Sidebar overlay -->
-	{#if showSidebar}
-		<div class="fixed inset-0 z-50 flex">
-			<div class="absolute inset-0 bg-black/60" onclick={() => showSidebar = false}></div>
-			<div class="relative w-72 max-w-[80vw] bg-gray-900 h-full flex flex-col shadow-2xl" style="padding-top: env(safe-area-inset-top);">
-				<div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
-					<span class="font-semibold text-lg">💬 대화 목록</span>
-					<button onclick={startNewConversation} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium transition-colors">+ 새 대화</button>
-				</div>
-				<div class="flex-1 overflow-y-auto">
-					{#each conversationList as conv}
-						<div
-							role="button" tabindex="0"
-							onclick={() => switchConversation(conv.id)}
-							onkeydown={(e) => { if (e.key === 'Enter') switchConversation(conv.id); }}
-							class="w-full text-left px-4 py-3 border-b border-gray-800/50 hover:bg-gray-800 transition-colors group cursor-pointer
-								{conv.id === currentConversationId ? 'bg-gray-800/70' : ''}"
-						>
-							<div class="flex items-start justify-between gap-2">
-								<div class="flex-1 min-w-0">
-									<p class="text-sm font-medium truncate">{conv.title}</p>
-									<p class="text-xs text-gray-500 mt-0.5">
-										{new Date(conv.updatedAt).toLocaleDateString('ko-KR')} {new Date(conv.updatedAt).toLocaleTimeString('ko-KR', {hour: '2-digit', minute: '2-digit'})}
-										· {conv.messageCount}개
-									</p>
-								</div>
-								<span
-									role="button" tabindex="-1"
-									onclick={(e) => handleDeleteConversation(conv.id, e)}
-									onkeydown={(e) => { if (e.key === 'Enter') handleDeleteConversation(conv.id, e); }}
-									class="opacity-0 group-hover:opacity-100 p-1 text-gray-500 hover:text-red-400 transition-all cursor-pointer"
-									title="삭제"
-								>🗑</span>
-							</div>
-						</div>
-					{/each}
-					{#if conversationList.length === 0}
-						<div class="px-4 py-8 text-center text-gray-500 text-sm">대화 내역이 없습니다</div>
-					{/if}
-				</div>
-			</div>
-		</div>
-	{/if}
+	<ConversationSidebar
+		show={showSidebar}
+		{conversationList}
+		{currentConversationId}
+		onClose={() => (showSidebar = false)}
+		onSwitch={switchConversation}
+		onNew={startNewConversation}
+		onDelete={handleDeleteConversation}
+	/>
 
-	<!-- Messages -->
-	<div bind:this={messagesContainer} class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-		{#if messages.length === 0}
-			<div class="flex flex-col items-center justify-center h-full text-gray-500 gap-4">
-				<span class="text-6xl">🦖</span>
-				<p class="text-lg">마이크를 켜고 렉스에게 말해보세요!</p>
-				<p class="text-sm text-gray-600">아래 마이크 버튼을 눌러 시작</p>
-			</div>
-		{/if}
+	<MessageList
+		{messages}
+		{isLoading}
+		bind:container={messagesContainer}
+		onDownload={handleDownload}
+	/>
 
-		{#each messages as message}
-			<div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
-				<div
-					class="max-w-[80%] px-4 py-2.5 rounded-2xl {message.role === 'user'
-						? 'bg-blue-600 text-white rounded-br-md'
-						: 'bg-gray-800 text-gray-100 rounded-bl-md'}"
-				>
-					{#if message.role === 'assistant' && !message.content && isLoading}
-						<span class="inline-flex gap-1">
-							<span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></span>
-							<span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.1s]"></span>
-							<span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]"></span>
-						</span>
-					{:else}
-						<p class="whitespace-pre-wrap">{message.content}</p>
-						{#if message.downloads && message.downloads.length > 0}
-							<div class="mt-2 space-y-1.5 border-t border-gray-700 pt-2">
-								{#each message.downloads as dl}
-									<button
-										onclick={() => handleDownload(dl)}
-										disabled={dl.status === 'downloading'}
-										class="flex items-center gap-2 w-full text-left px-3 py-2 rounded-lg bg-gray-700/50 hover:bg-gray-600/50 transition-colors text-sm disabled:opacity-70"
-									>
-										<span class="flex-shrink-0">
-											{#if dl.status === 'complete'}✅
-											{:else if dl.status === 'error'}❌
-											{:else if dl.status === 'downloading'}⏳
-											{:else}📥{/if}
-										</span>
-										<span class="flex-1 truncate">{dl.filename}</span>
-										{#if dl.status === 'downloading'}
-											<span class="text-xs text-blue-400">{dl.progress}%</span>
-										{:else if dl.status === 'error'}
-											<span class="text-xs text-red-400">{dl.error}</span>
-										{/if}
-									</button>
-								{/each}
-							</div>
-						{/if}
-					{/if}
-				</div>
-			</div>
-		{/each}
-	</div>
+	<MicControl
+		{waveformBars}
+		{conversation}
+		{sttError}
+		onToggleMic={toggleMic}
+		onClearError={() => (sttError = '')}
+	/>
 
-	<!-- Waveform + Interim (고정 영역 - 겹침 방지) -->
-	<div class="flex-shrink-0 px-4 py-2 space-y-1 bg-gray-950" style="padding-bottom: env(safe-area-inset-bottom);">
-		{#if sttError}
-			<div class="text-center text-xs text-red-400 bg-red-900/30 rounded-lg px-2 py-1.5">
-				⚠️ {sttError}
-				<button onclick={() => sttError = ''} class="ml-1 text-red-300 hover:text-white">✕</button>
-			</div>
-		{/if}
-		
-		{#if conversation.interimText}
-			<div class="text-center text-xs text-gray-400 italic truncate px-2">
-				"{conversation.interimText}"
-			</div>
-		{/if}
-
-		<div
-			class="flex items-center justify-center h-12 rounded-xl border transition-colors duration-300"
-			style="background-color: {conversation.stateColor}08; border-color: {conversation.stateColor}30"
-		>
-			<div class="flex items-end gap-[3px] h-8">
-				{#each waveformBars as height}
-					<div
-						class="w-[2px] rounded-full transition-all duration-75"
-						style="height: {Math.min(height, 28)}px; background-color: {conversation.stateColor}"
-					></div>
-				{/each}
-			</div>
-		</div>
-
-		<div class="flex justify-center pb-2">
-			<button
-				onclick={toggleMic}
-				class="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all duration-300 {conversation.micEnabled
-					? 'bg-red-600 hover:bg-red-500 shadow-lg shadow-red-600/30 scale-110'
-					: 'bg-gray-700 hover:bg-gray-600'}"
-			>
-				{conversation.micEnabled ? '🎤' : '🎙️'}
-			</button>
-		</div>
-	</div>
-
-	<!-- Music Player -->
 	{#if musicVideoId}
-		{#if musicExpanded}
-			<!-- 전체 화면 -->
-			<div class="fixed inset-0 z-50 bg-black flex flex-col" style="padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);">
-				<div class="flex items-center justify-between px-4 py-3 bg-gray-900">
-					<div class="flex items-center gap-2 flex-1 min-w-0">
-						<span class="text-lg">🎵</span>
-						<p class="text-sm text-white truncate">{musicTitle || '재생 중'}</p>
-						<span class="text-xs text-gray-500">{musicIndex + 1}/{musicPlaylist.length}</span>
-					</div>
-					<div class="flex gap-2">
-						<button onclick={() => musicExpanded = false} class="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg">▼ 축소</button>
-						<button onclick={() => { musicVideoId = null; musicTitle = ''; musicExpanded = false; musicPlaylist = []; }} class="px-3 py-1.5 text-xs bg-red-700 hover:bg-red-600 rounded-lg">⏹</button>
-					</div>
-				</div>
-				<!-- 컨트롤 바 -->
-				<div class="flex items-center justify-center gap-4 px-4 py-2 bg-gray-900/80">
-					<button onclick={prevTrack} disabled={musicIndex <= 0} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg disabled:opacity-30">⏮</button>
-					<button onclick={pauseMusic} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg">⏸</button>
-					<button onclick={resumeMusic} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg">▶</button>
-					<button onclick={nextTrack} disabled={musicIndex >= musicPlaylist.length - 1} class="px-3 py-2 text-lg bg-gray-700 hover:bg-gray-600 rounded-lg disabled:opacity-30">⏭</button>
-					<select onchange={(e) => setPlaybackRate(parseFloat((e.target as HTMLSelectElement).value))} class="px-2 py-2 text-xs bg-gray-700 rounded-lg text-white">
-						<option value="0.5" selected={musicSpeed === 0.5}>0.5x</option>
-						<option value="0.75" selected={musicSpeed === 0.75}>0.75x</option>
-						<option value="1" selected={musicSpeed === 1.0}>1x</option>
-						<option value="1.25" selected={musicSpeed === 1.25}>1.25x</option>
-						<option value="1.5" selected={musicSpeed === 1.5}>1.5x</option>
-						<option value="2" selected={musicSpeed === 2.0}>2x</option>
-					</select>
-				</div>
-				<div class="flex-1 relative">
-					<iframe
-						bind:this={musicIframe}
-						src={`https://www.youtube.com/embed/${musicVideoId}?autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent('https://localhost')}`}
-						style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
-						allow="autoplay; encrypted-media"
-						allowfullscreen
-						title="Music Player"
-					></iframe>
-				</div>
-			</div>
-		{:else}
-			<!-- 미니 플레이어 -->
-			<div class="flex-shrink-0 bg-gray-900 border-t border-gray-800 px-3 py-2">
-				<div class="flex items-center gap-1.5">
-					<button onclick={prevTrack} disabled={musicIndex <= 0} class="p-1 text-sm disabled:opacity-30">⏮</button>
-					<span class="text-sm">🎵</span>
-					<p class="flex-1 text-xs text-gray-300 truncate">{musicTitle || '재생 중'} <span class="text-gray-500">({musicIndex+1}/{musicPlaylist.length})</span></p>
-					<button onclick={nextTrack} disabled={musicIndex >= musicPlaylist.length - 1} class="p-1 text-sm disabled:opacity-30">⏭</button>
-					<button onclick={() => musicExpanded = true} class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded-lg">▲</button>
-					<button onclick={() => { musicVideoId = null; musicTitle = ''; musicPlaylist = []; }} class="px-2 py-1 text-xs bg-red-700 hover:bg-red-600 rounded-lg">⏹</button>
-				</div>
-				<div class="mt-1 rounded-lg overflow-hidden" style="height: 0; padding-bottom: 20%; position: relative;">
-					<iframe
-						bind:this={musicIframe}
-						src={`https://www.youtube.com/embed/${musicVideoId}?autoplay=1&playsinline=1&enablejsapi=1&origin=${encodeURIComponent('https://localhost')}`}
-						style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"
-						allow="autoplay; encrypted-media"
-						allowfullscreen
-						title="Music Player"
-					></iframe>
-				</div>
-			</div>
-		{/if}
+		<MusicMiniPlayer
+			{musicVideoId}
+			{musicTitle}
+			{musicPlaylist}
+			{musicIndex}
+			{musicSpeed}
+			{musicExpanded}
+			bind:musicIframe
+			onPrev={prevTrack}
+			onNext={nextTrack}
+			onPause={pauseMusic}
+			onResume={resumeMusic}
+			onStop={() => { musicVideoId = null; musicTitle = ''; musicExpanded = false; musicPlaylist = []; }}
+			onSetSpeed={setPlaybackRate}
+			onSetExpanded={(v) => (musicExpanded = v)}
+		/>
 	{/if}
 
-	<!-- Text input (toggle) -->
-	{#if showTextInput}
-		<div class="flex-shrink-0 px-4 pb-4 pt-2">
-			<div class="flex gap-2">
-				<input
-					type="text"
-					bind:value={input}
-					onkeydown={handleKeydown}
-					placeholder={isLoading ? "응답 중... (전송하면 대기열에 추가)" : "메시지를 입력하세요..."}
-					class="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-				/>
-				<button
-					onclick={() => sendMessage()}
-					disabled={!input.trim()}
-					class="px-4 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-500 disabled:opacity-50 transition-colors"
-				>
-					{isLoading ? '대기' : '전송'}
-				</button>
-			</div>
-		</div>
-	{/if}
-
-
+	<TextInputBar
+		show={showTextInput}
+		{isLoading}
+		bind:value={input}
+		onSend={() => sendMessage()}
+		onKeydown={handleKeydown}
+	/>
 </div>
 {/if}
 
-<!-- 종료 확인 다이얼로그 -->
-{#if showExitConfirm}
-<div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/70">
-	<div class="bg-gray-900 rounded-2xl p-6 mx-8 max-w-sm w-full shadow-2xl">
-		<p class="text-white text-lg font-semibold text-center mb-2">앱 종료</p>
-		<p class="text-gray-400 text-center text-sm mb-6">앱을 종료하시겠습니까?</p>
-		<div class="flex gap-3">
-			<button
-				onclick={() => showExitConfirm = false}
-				class="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 rounded-xl font-medium text-white transition-colors"
-			>취소</button>
-			<button
-				onclick={() => { import('@capacitor/app').then(({ App }) => App.exitApp()); }}
-				class="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 rounded-xl font-medium text-white transition-colors"
-			>종료</button>
-		</div>
-	</div>
-</div>
+<ExitConfirmDialog
+	show={showExitConfirm}
+	onCancel={() => (showExitConfirm = false)}
+	onConfirm={() => { import('@capacitor/app').then(({ App }) => App.exitApp()); }}
+/>
+
+{#if settings.developerMode}
+	<DebugPanel />
 {/if}

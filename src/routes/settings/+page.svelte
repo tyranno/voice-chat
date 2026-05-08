@@ -2,12 +2,41 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { settings } from '$lib/stores/settings.svelte';
+	import { toast } from '$lib/stores/toast.svelte';
 
 	function onBackPress() { goto('/'); }
 	onMount(() => window.addEventListener('hardwareBackPress', onBackPress));
 	onDestroy(() => window.removeEventListener('hardwareBackPress', onBackPress));
 	import { checkServerHealth } from '$lib/api/health';
 	import { checkForUpdate, downloadAndInstall, type ApkInfo } from '$lib/api/updater';
+
+	let micPermission = $state<'unknown' | 'granted' | 'denied'>('unknown');
+	onMount(async () => {
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			stream.getTracks().forEach((t) => t.stop());
+			micPermission = 'granted';
+		} catch {
+			micPermission = 'denied';
+		}
+	});
+
+	async function requestMic() {
+		try {
+			const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+			stream.getTracks().forEach((t) => t.stop());
+			micPermission = 'granted';
+			toast.success('마이크 권한 허용됨');
+		} catch {
+			micPermission = 'denied';
+			toast.warning('마이크 권한이 거부되었습니다. OS 설정에서 변경하세요.');
+		}
+	}
+
+	function restartOnboarding() {
+		settings.onboardingDone = false;
+		goto('/onboarding');
+	}
 
 	let testStatus = $state<'idle' | 'testing' | 'ok' | 'error'>('idle');
 	let testMessage = $state('');
@@ -88,7 +117,7 @@
 						{testStatus === 'testing' ? 'bg-gray-700 text-gray-400' :
 						 testStatus === 'ok' ? 'bg-green-700 text-white' :
 						 testStatus === 'error' ? 'bg-red-700 text-white' :
-						 'bg-blue-600 hover:bg-blue-500 text-white'}"
+						 'bg-emerald-500 hover:bg-emerald-400 text-white'}"
 				>
 					{#if testStatus === 'testing'}
 						연결 테스트 중...
@@ -171,7 +200,7 @@
 					</div>
 					<button
 						onclick={onDownloadInstall}
-						class="w-full px-4 py-2 rounded-lg font-medium bg-green-600 hover:bg-green-500 text-white transition-colors"
+						class="w-full px-4 py-2 rounded-lg font-medium bg-emerald-500 hover:bg-emerald-400 text-white transition-colors"
 					>
 						⬇️ 다운로드 & 설치
 					</button>
@@ -186,7 +215,7 @@
 						onclick={onCheckUpdate}
 						disabled={updateStatus === 'checking'}
 						class="w-full px-4 py-2 rounded-lg font-medium transition-colors
-							{updateStatus === 'checking' ? 'bg-gray-700 text-gray-400' : 'bg-blue-600 hover:bg-blue-500 text-white'}"
+							{updateStatus === 'checking' ? 'bg-gray-700 text-gray-400' : 'bg-emerald-500 hover:bg-emerald-400 text-white'}"
 					>
 						{updateStatus === 'checking' ? '확인 중...' : '🔄 업데이트 확인'}
 					</button>
@@ -194,10 +223,58 @@
 			</div>
 		</section>
 
+		<!-- Permissions -->
+		<section>
+			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🔐 권한</h2>
+			<div class="space-y-3 bg-gray-900 rounded-xl p-4">
+				<div class="flex items-center justify-between">
+					<div>
+						<p class="text-sm">마이크</p>
+						<p class="text-xs text-gray-500">음성 입력에 필요</p>
+					</div>
+					{#if micPermission === 'granted'}
+						<span class="text-xs text-emerald-400">✅ 허용됨</span>
+					{:else if micPermission === 'denied'}
+						<span class="text-xs text-red-400">❌ 거부됨</span>
+					{:else}
+						<button onclick={requestMic} class="px-3 py-1.5 text-xs bg-emerald-500 hover:bg-emerald-400 rounded-lg transition-colors">권한 요청</button>
+					{/if}
+				</div>
+				{#if micPermission === 'denied'}
+					<p class="text-xs text-gray-500">
+						OS 설정 → 앱 → Rex → 권한에서 마이크를 허용해주세요.
+					</p>
+				{/if}
+			</div>
+		</section>
+
+		<!-- Developer Mode -->
+		<section>
+			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">🛠 개발자</h2>
+			<div class="space-y-3 bg-gray-900 rounded-xl p-4">
+				<div class="flex items-center justify-between">
+					<div>
+						<p class="text-sm">개발자 모드</p>
+						<p class="text-xs text-gray-500">실시간 디버그 로그 표시</p>
+					</div>
+					<label class="relative inline-flex items-center cursor-pointer">
+						<input type="checkbox" bind:checked={settings.developerMode} class="sr-only peer" />
+						<div class="w-11 h-6 bg-gray-700 rounded-full peer peer-checked:bg-emerald-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:after:translate-x-5"></div>
+					</label>
+				</div>
+				<button
+					onclick={restartOnboarding}
+					class="w-full px-4 py-2 rounded-lg font-medium bg-gray-700 hover:bg-gray-600 text-white transition-colors text-sm"
+				>
+					온보딩 다시 보기
+				</button>
+			</div>
+		</section>
+
 		<!-- Info -->
 		<section>
 			<div class="bg-gray-900/50 rounded-xl p-4 text-sm text-gray-500">
-				<p>🦖 VoiceChat v0.3</p>
+				<p>🦖 Rex v0.3</p>
 				<p>App → GCP Server → ClawBridge → OpenClaw</p>
 			</div>
 		</section>
