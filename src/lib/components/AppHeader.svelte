@@ -7,6 +7,7 @@
 		instanceLabel: string;
 		conversation: ConversationLike;
 		showDropdown: boolean;
+		activeTaskCount?: number;
 		onToggleSidebar: () => void;
 		onChangeInstance: () => void;
 		onToggleTextInput: () => void;
@@ -16,12 +17,13 @@
 		onNewConversation: () => void;
 		onOpenNotifications: () => void;
 		onOpenMusic: () => void;
+		onOpenTasks: () => void;
 	}
 	let {
-		instanceLabel, conversation, showDropdown,
+		instanceLabel, conversation, showDropdown, activeTaskCount = 0,
 		onToggleSidebar, onChangeInstance, onToggleTextInput, onOpenSettings,
 		onToggleDropdown, onCloseDropdown,
-		onNewConversation, onOpenNotifications, onOpenMusic
+		onNewConversation, onOpenNotifications, onOpenMusic, onOpenTasks
 	}: Props = $props();
 </script>
 
@@ -72,6 +74,12 @@
 				<div class="absolute right-0 top-full mt-1 z-50 w-44 bg-gray-800 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
 					<button onclick={() => { onCloseDropdown(); onNewConversation(); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
 						<span>✏️</span><span>새 대화</span>
+					</button>
+					<button onclick={() => { onCloseDropdown(); onOpenTasks(); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
+						<span>🦖</span><span>AI 작업</span>
+						{#if activeTaskCount > 0}
+							<span class="ml-auto text-[10px] px-1.5 py-0.5 bg-emerald-500/30 text-emerald-300 rounded-full">{activeTaskCount}</span>
+						{/if}
 					</button>
 					<button onclick={() => { onCloseDropdown(); onOpenNotifications(); }} class="w-full text-left px-3 py-2.5 hover:bg-gray-700 transition-colors text-sm flex items-center gap-2">
 						<span>🔔</span><span>알림</span>

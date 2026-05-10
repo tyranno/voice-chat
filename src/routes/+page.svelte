@@ -37,6 +37,8 @@
 	import DebugPanel from '$lib/components/DebugPanel.svelte';
 	import { debug as debugStore } from '$lib/stores/debug.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { tasks } from '$lib/stores/tasks.svelte';
+	import { startTask } from '$lib/api/tasks';
 
 	interface DownloadInfo {
 		url: string;
@@ -554,6 +556,39 @@
 		}
 	}
 
+	async function handleTaskRequest(text: string): Promise<boolean> {
+		// Voice triggers for Ralph autonomous tasks
+		// Patterns: "랄프야 X 해줘", "랄프 X", "X 이거 맡겨", "X 자율로 해"
+		const patterns = [
+			/^랄프(?:야|에게|한테)?[,\s]+(.+)/,
+			/(.+?)\s*(?:이거\s*)?(?:맡겨|랄프(?:에게|한테))$/,
+			/(.+?)\s*자율(?:로|적으로)\s*(?:해|진행|작업)/,
+		];
+		let taskPrompt = '';
+		for (const p of patterns) {
+			const m = text.match(p);
+			if (m && m[1] && m[1].trim().length > 3) {
+				taskPrompt = m[1].trim();
+				break;
+			}
+		}
+		if (!taskPrompt) return false;
+
+		addDebug(`🦖 Ralph 작업 감지: "${taskPrompt}"`);
+		messages.push({ role: 'user', content: text });
+		messages.push({ role: 'assistant', content: `🦖 작업을 시작합니다: "${taskPrompt}". /tasks 화면에서 진행 상황을 확인할 수 있어요.` });
+		try {
+			startTask({ prompt: taskPrompt });
+			toast.info('Ralph 작업 시작됨');
+			tts?.speak('작업을 시작합니다.');
+			persistMessages();
+		} catch (e) {
+			messages[messages.length - 1].content = `❌ 작업 시작 실패: ${e}`;
+			toast.error('작업 시작 실패');
+		}
+		return true;
+	}
+
 	async function handleMusicRequest(text: string): Promise<boolean> {
 		// 멈춤/정지
 		if (/(?:노래|음악|곡)?\s*(?:멈춰|정지|꺼|중지|스톱|stop)/.test(text)) {
@@ -695,6 +730,12 @@
 
 		// 음악 재생 중이면 일시정지
 		if (musicVideoId) pauseMusic();
+
+		// Ralph 작업 트리거 감지 (음성/텍스트)
+		if (await handleTaskRequest(finalText)) {
+			input = '';
+			return;
+		}
 
 		// 음악 요청이면 YouTube 검색으로 처리
 		if (await handleMusicRequest(finalText)) {
@@ -941,6 +982,7 @@
 		instanceLabel={settings.getInstanceName(settings.selectedInstance, '렉스')}
 		{conversation}
 		{showDropdown}
+		activeTaskCount={tasks.active.length}
 		onToggleSidebar={() => { showSidebar = !showSidebar; if (showSidebar) refreshConversationList(); }}
 		onChangeInstance={async () => { stt?.stop(); try { instances = await getInstances(); } catch {} appState = 'select-instance'; }}
 		onToggleTextInput={() => (showTextInput = !showTextInput)}
@@ -950,6 +992,7 @@
 		onNewConversation={startNewConversation}
 		onOpenNotifications={() => goto('/notifications')}
 		onOpenMusic={() => goto('/music')}
+		onOpenTasks={() => goto('/tasks')}
 	/>
 
 	<ConversationSidebar
