@@ -1,36 +1,127 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#2563eb"/>
-      <stop offset="100%" style="stop-color:#1d4ed8"/>
-    </linearGradient>
+    <!-- Slightly off-center radial gradient for crayon feel -->
+    <radialGradient id="bg" cx="40%" cy="35%" r="80%">
+      <stop offset="0%" style="stop-color:#6ee7b7"/>
+      <stop offset="60%" style="stop-color:#10b981"/>
+      <stop offset="100%" style="stop-color:#065f46"/>
+    </radialGradient>
+
+    <!-- Wobbly hand-drawn texture filter -->
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="3"/>
+      <feDisplacementMap in="SourceGraphic" scale="8"/>
+    </filter>
+
+    <filter id="roughLight" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="7"/>
+      <feDisplacementMap in="SourceGraphic" scale="4"/>
+    </filter>
   </defs>
-  <!-- Background -->
+
+  <!-- Background: emerald, slightly textured -->
   <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
-  <!-- Dinosaur silhouette (T-Rex style, white) -->
-  <g transform="translate(512, 520) scale(1.0)" fill="white">
-    <!-- Body -->
-    <ellipse cx="0" cy="40" rx="140" ry="170"/>
-    <!-- Tail -->
-    <path d="M-100,120 Q-200,100 -280,180 Q-300,200 -280,190 Q-180,130 -90,140Z"/>
-    <!-- Neck -->
-    <path d="M60,-80 Q80,-160 60,-220 Q40,-260 80,-260 Q140,-240 120,-160 Q110,-100 90,-60Z"/>
+
+  <!-- Random doodle scribbles in background (kid-style) -->
+  <g stroke="#ffffff" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.4" filter="url(#roughLight)">
+    <path d="M 130 180 Q 160 160 190 185 T 250 175"/>
+    <path d="M 800 200 Q 830 220 850 195"/>
+    <path d="M 150 850 L 170 870 M 175 850 L 155 870"/>
+    <path d="M 880 800 q -10 -10 0 -20 q 10 0 0 -10"/>
+    <circle cx="900" cy="500" r="14"/>
+    <circle cx="900" cy="500" r="6" fill="#ffffff"/>
+    <path d="M 100 500 L 115 520 L 130 500" />
+  </g>
+
+  <!-- Music notes scattered (doodle style) -->
+  <g fill="#ffffff" opacity="0.85" filter="url(#roughLight)">
+    <!-- Note 1: left upper -->
+    <g transform="translate(220, 280)">
+      <ellipse cx="0" cy="0" rx="22" ry="16" transform="rotate(-15)"/>
+      <rect x="14" y="-90" width="9" height="92" rx="3"/>
+      <path d="M 23 -90 Q 55 -80 45 -50 Q 55 -65 23 -55 Z"/>
+    </g>
+    <!-- Note 2: right side -->
+    <g transform="translate(800, 380) rotate(20)">
+      <ellipse cx="0" cy="0" rx="18" ry="13"/>
+      <rect x="11" y="-70" width="7" height="72" rx="2"/>
+    </g>
+    <!-- Note 3: bottom right -->
+    <g transform="translate(740, 760) rotate(-10)">
+      <ellipse cx="0" cy="0" rx="20" ry="15"/>
+      <rect x="13" y="-75" width="8" height="78" rx="2"/>
+      <path d="M 21 -75 Q 50 -65 40 -40 Z"/>
+    </g>
+  </g>
+
+  <!-- T-Rex (kid-drawn style with thick black outline) -->
+  <g transform="translate(512, 560)" filter="url(#rough)">
+
+    <!-- Tail (wobbly) -->
+    <path d="M -100 30 Q -200 0 -270 70 Q -290 90 -270 80 Q -190 30 -90 60 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+
+    <!-- Body (rounded blob, slightly tilted) -->
+    <ellipse cx="-10" cy="20" rx="135" ry="145" fill="#fbbf24" stroke="#1f2937" stroke-width="16"/>
+
+    <!-- Tummy spot (lighter) -->
+    <ellipse cx="-30" cy="80" rx="60" ry="50" fill="#fde68a" opacity="0.7"/>
+
+    <!-- Back legs (chunky, simple) -->
+    <path d="M -60 140 Q -68 220 -78 260 Q -82 285 -50 285 Q -25 285 -22 260 Q -15 220 -10 150 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M 40 140 Q 35 220 25 260 Q 22 285 50 285 Q 75 285 80 260 Q 88 220 85 150 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+
+    <!-- Toe stripes -->
+    <path d="M -65 270 L -58 285 M -50 272 L -50 287 M -35 270 L -42 285"
+          stroke="#1f2937" stroke-width="6" stroke-linecap="round" fill="none"/>
+    <path d="M 30 270 L 37 285 M 50 272 L 50 287 M 65 270 L 58 285"
+          stroke="#1f2937" stroke-width="6" stroke-linecap="round" fill="none"/>
+
+    <!-- Neck (curved up to head) -->
+    <path d="M 70 -40 Q 115 -120 100 -180 Q 90 -220 140 -210 Q 180 -200 160 -135 Q 145 -85 120 -30 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+
     <!-- Head -->
-    <ellipse cx="100" cy="-260" rx="90" ry="60"/>
-    <!-- Jaw -->
-    <path d="M120,-230 Q180,-230 200,-240 Q210,-250 200,-260 Q180,-255 120,-250Z"/>
-    <!-- Eye -->
-    <circle cx="130" cy="-275" r="14" fill="#2563eb"/>
-    <circle cx="133" cy="-278" r="6" fill="#1d4ed8"/>
-    <!-- Tiny arms -->
-    <path d="M90,-20 Q130,-40 140,-20 Q135,-10 120,-10 Q100,0 90,-10Z"/>
-    <!-- Left leg -->
-    <path d="M-40,180 Q-50,260 -60,320 Q-70,340 -40,340 Q-20,340 -10,320 Q0,300 -10,260 Q-20,200 -20,180Z"/>
-    <!-- Right leg -->
-    <path d="M60,180 Q50,260 40,320 Q30,340 60,340 Q80,340 90,320 Q100,300 90,260 Q80,200 80,180Z"/>
-    <!-- Teeth -->
-    <path d="M50,-228 L55,-218 L60,-228 L65,-218 L70,-228 L75,-218 L80,-228" fill="none" stroke="white" stroke-width="3"/>
-    <!-- Spikes on back -->
-    <path d="M-60,-60 L-80,-100 L-50,-70 L-70,-110 L-40,-80 L-55,-120 L-20,-80" fill="white" opacity="0.8"/>
+    <ellipse cx="160" cy="-210" rx="100" ry="70"
+             fill="#fbbf24" stroke="#1f2937" stroke-width="14"/>
+
+    <!-- Snout/jaw line -->
+    <path d="M 180 -190 Q 250 -188 270 -200" stroke="#1f2937" stroke-width="10"
+          stroke-linecap="round" fill="none"/>
+    <!-- Open mouth wedge -->
+    <path d="M 200 -200 L 270 -195 L 255 -180 Z" fill="#1f2937"/>
+    <!-- Triangle teeth -->
+    <path d="M 210 -195 L 215 -185 L 220 -195 M 230 -195 L 235 -185 L 240 -195 M 250 -195 L 255 -185 L 260 -195"
+          fill="#ffffff" stroke="none"/>
+
+    <!-- Big eye (cartoon style) -->
+    <circle cx="170" cy="-230" r="22" fill="#ffffff" stroke="#1f2937" stroke-width="8"/>
+    <circle cx="174" cy="-227" r="11" fill="#1f2937"/>
+    <circle cx="177" cy="-230" r="4" fill="#ffffff"/>
+
+    <!-- Tiny arms (cute and silly) -->
+    <path d="M 65 -10 Q 100 -25 115 0 Q 110 12 95 12 Q 75 8 65 -2 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="12" stroke-linejoin="round"/>
+    <!-- Tiny finger dashes -->
+    <path d="M 105 8 L 110 18 M 100 10 L 102 20 M 92 10 L 92 20"
+          stroke="#1f2937" stroke-width="5" stroke-linecap="round" fill="none"/>
+
+    <!-- Back spikes (kid-drawn triangles) -->
+    <g fill="#f59e0b" stroke="#1f2937" stroke-width="8" stroke-linejoin="round">
+      <path d="M -45 -75 L -55 -115 L -25 -90 Z"/>
+      <path d="M -10 -100 L -22 -135 L 10 -110 Z"/>
+      <path d="M 30 -110 L 22 -148 L 55 -115 Z"/>
+      <path d="M 65 -105 L 65 -140 L 92 -110 Z"/>
+    </g>
+  </g>
+
+  <!-- "REX" handwritten text below -->
+  <g transform="translate(512, 880)" filter="url(#rough)">
+    <text x="0" y="0" font-family="Comic Sans MS, Marker Felt, Arial Black"
+          font-size="120" font-weight="900" fill="#ffffff"
+          text-anchor="middle" stroke="#1f2937" stroke-width="6"
+          paint-order="stroke" letter-spacing="6">REX</text>
   </g>
 </svg>

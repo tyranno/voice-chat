@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="3"/>
+      <feDisplacementMap in="SourceGraphic" scale="8"/>
+    </filter>
+  </defs>
+
+  <!-- Adaptive foreground (Rex centered, no background, safe zone ~340-684) -->
+  <g transform="translate(512, 540)" filter="url(#rough)">
+
+    <!-- Tail -->
+    <path d="M -80 30 Q -160 0 -210 70 Q -225 85 -210 80 Q -150 35 -75 55 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+
+    <!-- Body -->
+    <ellipse cx="-10" cy="20" rx="120" ry="130" fill="#fbbf24" stroke="#1f2937" stroke-width="16"/>
+
+    <!-- Tummy spot -->
+    <ellipse cx="-30" cy="75" rx="55" ry="45" fill="#fde68a" opacity="0.7"/>
+
+    <!-- Legs -->
+    <path d="M -55 130 Q -63 200 -73 235 Q -77 258 -50 258 Q -25 258 -22 235 Q -15 200 -10 140 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M 38 130 Q 33 200 23 235 Q 20 258 48 258 Q 73 258 78 235 Q 86 200 82 140 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+
+    <!-- Toes -->
+    <path d="M -60 245 L -55 260 M -45 247 L -45 262 M -30 245 L -35 260"
+          stroke="#1f2937" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M 30 245 L 35 260 M 48 247 L 48 262 M 62 245 L 57 260"
+          stroke="#1f2937" stroke-width="5" stroke-linecap="round" fill="none"/>
+
+    <!-- Neck -->
+    <path d="M 65 -40 Q 110 -115 95 -175 Q 85 -213 132 -203 Q 170 -193 152 -130 Q 138 -82 115 -30 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="14" stroke-linejoin="round"/>
+
+    <!-- Head -->
+    <ellipse cx="152" cy="-203" rx="92" ry="65"
+             fill="#fbbf24" stroke="#1f2937" stroke-width="14"/>
+
+    <!-- Mouth wedge -->
+    <path d="M 188 -195 L 248 -190 L 235 -178 Z" fill="#1f2937"/>
+    <!-- Teeth -->
+    <path d="M 198 -190 L 203 -180 L 208 -190 M 218 -190 L 223 -180 L 228 -190 M 238 -190 L 243 -180"
+          fill="#ffffff" stroke="none"/>
+
+    <!-- Eye -->
+    <circle cx="162" cy="-223" r="20" fill="#ffffff" stroke="#1f2937" stroke-width="7"/>
+    <circle cx="166" cy="-220" r="10" fill="#1f2937"/>
+    <circle cx="169" cy="-223" r="4" fill="#ffffff"/>
+
+    <!-- Arms -->
+    <path d="M 62 -10 Q 95 -25 110 0 Q 105 12 90 12 Q 72 8 62 -2 Z"
+          fill="#fbbf24" stroke="#1f2937" stroke-width="12" stroke-linejoin="round"/>
+
+    <!-- Spikes -->
+    <g fill="#f59e0b" stroke="#1f2937" stroke-width="8" stroke-linejoin="round">
+      <path d="M -42 -75 L -52 -110 L -22 -90 Z"/>
+      <path d="M -8 -98 L -20 -132 L 12 -108 Z"/>
+      <path d="M 30 -108 L 22 -142 L 53 -113 Z"/>
+      <path d="M 63 -100 L 63 -135 L 88 -108 Z"/>
+    </g>
+  </g>
+</svg>

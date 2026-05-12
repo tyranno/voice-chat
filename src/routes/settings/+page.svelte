@@ -296,9 +296,9 @@
 		<!-- Info -->
 		<section>
 			<div class="bg-gray-900/50 rounded-xl p-4 text-sm text-gray-500">
-				<p>🦖 Rex v0.10.24</p>
+				<p>🦖 Rex v0.10.26</p>
 				<p>App → GCP Server → ClawBridge → OpenClaw</p>
-				<p class="text-[10px] text-gray-600 mt-1">+ 서비스 측 항상 duration 프로브 + dev 모드 dur/pos 표시 + JS 측 string coerce</p>
+				<p class="text-[10px] text-gray-600 mt-1">+ 아이콘/스플래시 키드 드로잉 스타일 (낙서 텍스처 + Rex 글씨)</p>
 			</div>
 		</section>
 	</div>
