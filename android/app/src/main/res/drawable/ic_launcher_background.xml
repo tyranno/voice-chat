@@ -4,8 +4,15 @@
     android:height="108dp"
     android:viewportHeight="108"
     android:viewportWidth="108">
-    <!-- 파란 그라데이션 배경 (solid blue) -->
+    <!-- Emerald 그라데이션 배경 (Rex 브랜드) -->
     <path
-        android:fillColor="#1E40AF"
-        android:pathData="M0,0h108v108h-108z" />
+        android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor" xmlns:aapt="http://schemas.android.com/aapt">
+            <gradient
+                android:startColor="#10B981"
+                android:endColor="#059669"
+                android:angle="135"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
 </vector>

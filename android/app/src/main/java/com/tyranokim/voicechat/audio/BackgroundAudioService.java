@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -18,8 +19,10 @@ import androidx.media3.common.C;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
+import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DefaultDataSource;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
@@ -41,17 +44,29 @@ public class BackgroundAudioService extends Service {
 
     private ExoPlayer player;
     private MediaSession mediaSession;
-    private final List<String> playlist = new ArrayList<>();
+    // Raw playlist (YouTube watch URLs / other) — resolved lazily.
+    private final List<String> rawPlaylist = new ArrayList<>();
+    // Sparse cache of resolved playable URLs by index. null = not yet resolved.
+    private final List<String> resolvedCache = new ArrayList<>();
     private final StreamUrlResolver streamUrlResolver = new StreamUrlResolver();
     private int currentIndex = -1;
     private String currentTitle = "Voice Chat Audio";
     private String currentArtist = "Voice Chat";
     private String currentSourceUrl;
+    // Track currently-loading index to avoid duplicate resolves
+    private volatile int resolvingIndex = -1;
+    // Client-provided duration hint (e.g. from MediaStore for saved tracks) — used when
+    // ExoPlayer hasn't parsed metadata yet so the progress bar is usable from the start.
+    private long hintDurationMs = 0;
     private final Handler progressHandler = new Handler(Looper.getMainLooper());
     private final Runnable progressTicker = new Runnable() {
         @Override
         public void run() {
-            if (player != null && player.isPlaying()) {
+            if (player == null) return;
+            int state = player.getPlaybackState();
+            // Always re-emit status while player is alive (not IDLE/ENDED).
+            // Don't gate on isPlaying() — audio focus dips can flip it false transiently.
+            if (state == Player.STATE_READY || state == Player.STATE_BUFFERING) {
                 broadcastStatus(null);
                 progressHandler.postDelayed(this, 1000);
             }
@@ -67,8 +82,11 @@ public class BackgroundAudioService extends Service {
         DefaultHttpDataSource.Factory httpDataSourceFactory = new DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(60_000)
             .setReadTimeoutMs(60_000);
+        // DefaultDataSource.Factory routes content:// to ContentDataSource, file:// to FileDataSource,
+        // http(s):// to our tuned HttpDataSource. Required so locally-saved tracks play.
+        DefaultDataSource.Factory dataSourceFactory = new DefaultDataSource.Factory(this, httpDataSourceFactory);
         player = new ExoPlayer.Builder(this)
-            .setMediaSourceFactory(new DefaultMediaSourceFactory(httpDataSourceFactory))
+            .setMediaSourceFactory(new DefaultMediaSourceFactory(dataSourceFactory))
             .build();
         player.setWakeMode(C.WAKE_MODE_NETWORK);
         player.setAudioAttributes(
@@ -89,7 +107,7 @@ public class BackgroundAudioService extends Service {
                 broadcastStatus(null);
                 // Auto-advance to next track when current track ends
                 if (state == Player.STATE_ENDED) {
-                    if (currentIndex >= 0 && currentIndex < playlist.size() - 1) {
+                    if (currentIndex >= 0 && currentIndex < rawPlaylist.size() - 1) {
                         Log.d(TAG, "Track ended → auto next track " + (currentIndex + 1));
                         currentIndex++;
                         playCurrent();
@@ -105,7 +123,10 @@ public class BackgroundAudioService extends Service {
                 updateNotification();
                 broadcastStatus(null);
                 progressHandler.removeCallbacks(progressTicker);
-                if (isPlaying) {
+                // Run ticker whenever the player is alive (READY/BUFFERING),
+                // not only when isPlaying — keeps UI consistent across audio-focus blips.
+                int s = player != null ? player.getPlaybackState() : Player.STATE_IDLE;
+                if (s == Player.STATE_READY || s == Player.STATE_BUFFERING) {
                     progressHandler.post(progressTicker);
                 }
             }
@@ -140,18 +161,39 @@ public class BackgroundAudioService extends Service {
 
         String action = intent.getAction();
         Log.d(TAG, "onStartCommand action=" + action + " startId=" + startId);
+        // Ping action: immediately broadcast current status so JS can pick up state on resume
+        if ("com.tyranokim.voicechat.audio.ACTION_PING".equals(action)) {
+            broadcastStatus(null);
+            return START_STICKY;
+        }
         switch (action) {
             case BackgroundAudioPlugin.ACTION_PLAY:
                 handlePlay(intent);
                 break;
             case BackgroundAudioPlugin.ACTION_PAUSE:
+                // Serialize on player's looper so consecutive pause/resume don't race
                 if (player != null) {
-                    player.pause();
+                    final Player p = player;
+                    progressHandler.post(() -> p.setPlayWhenReady(false));
                 }
                 break;
             case BackgroundAudioPlugin.ACTION_RESUME:
                 if (player != null) {
-                    player.play();
+                    final Player p = player;
+                    progressHandler.post(() -> {
+                        try {
+                            int s = p.getPlaybackState();
+                            Log.i(TAG, "Resume from " + playbackStateName(s) + " mediaItems=" + p.getMediaItemCount());
+                            if (s == Player.STATE_IDLE || s == Player.STATE_ENDED || p.getMediaItemCount() == 0) {
+                                stopped = false;
+                                playCurrent();
+                            } else {
+                                p.setPlayWhenReady(true);
+                            }
+                        } catch (Exception ex) {
+                            Log.e(TAG, "RESUME failed: " + ex.getMessage(), ex);
+                        }
+                    });
                 }
                 break;
             case BackgroundAudioPlugin.ACTION_STOP:
@@ -167,6 +209,13 @@ public class BackgroundAudioService extends Service {
                 int positionMs = intent.getIntExtra(BackgroundAudioPlugin.EXTRA_POSITION_MS, -1);
                 if (player != null && positionMs >= 0) {
                     player.seekTo(positionMs);
+                }
+                break;
+            case BackgroundAudioPlugin.ACTION_RATE:
+                float rate = intent.getFloatExtra(BackgroundAudioPlugin.EXTRA_RATE, 1.0f);
+                if (player != null) {
+                    player.setPlaybackParameters(new PlaybackParameters(rate));
+                    Log.i(TAG, "Playback rate set to " + rate);
                 }
                 break;
             default:
@@ -192,19 +241,49 @@ public class BackgroundAudioService extends Service {
 
         currentTitle = valueOrDefault(intent.getStringExtra(BackgroundAudioPlugin.EXTRA_TITLE), "Voice Chat Audio");
         currentArtist = valueOrDefault(intent.getStringExtra(BackgroundAudioPlugin.EXTRA_ARTIST), "Voice Chat");
+        hintDurationMs = intent.getLongExtra(BackgroundAudioPlugin.EXTRA_DURATION_MS, 0);
+        Log.i(TAG, "handlePlay hintFromIntent=" + hintDurationMs + " url=" + url);
+        // For content:// URIs (local saved tracks), ALWAYS probe — never trust just the JS hint.
+        // MediaStore DURATION is authoritative (we confirmed listTracks returns correct value),
+        // so use max(hint, queried) to be defensive against silent JS/bridge serialization issues.
+        if (url != null && url.startsWith("content://")) {
+            android.net.Uri u = android.net.Uri.parse(url);
+            long probed = 0;
+            try { probed = queryContentDuration(u); } catch (Exception ignored) {}
+            Log.i(TAG, "handlePlay queryContentDuration=" + probed);
+            if (probed <= 0) {
+                try { probed = mediaMetadataDuration(u); } catch (Exception ignored) {}
+                Log.i(TAG, "handlePlay mediaMetadataDuration=" + probed);
+            }
+            if (probed <= 0) {
+                try { probed = mediaPlayerDuration(u); } catch (Exception ignored) {}
+                Log.i(TAG, "handlePlay mediaPlayerDuration=" + probed);
+            }
+            if (probed > hintDurationMs) hintDurationMs = probed;
+        }
+        stopped = false; // reset stop guard on new play
+        Log.i(TAG, "handlePlay hintDuration=" + hintDurationMs + " url=" + url);
 
-        String playlistJson = intent.getStringExtra(BackgroundAudioPlugin.EXTRA_PLAYLIST);
+        // Prefer EXTRA_RAW_PLAYLIST (lazy resolve). Fall back to EXTRA_PLAYLIST (legacy: already-resolved).
+        String rawJson = intent.getStringExtra(BackgroundAudioPlugin.EXTRA_RAW_PLAYLIST);
+        boolean isResolved = false;
+        if (rawJson == null || rawJson.isEmpty()) {
+            rawJson = intent.getStringExtra(BackgroundAudioPlugin.EXTRA_PLAYLIST);
+            isResolved = true; // legacy: items already playable
+        }
         int requestedIndex = intent.getIntExtra(BackgroundAudioPlugin.EXTRA_INDEX, -1);
 
-        playlist.clear();
+        rawPlaylist.clear();
+        resolvedCache.clear();
 
-        if (playlistJson != null) {
+        if (rawJson != null) {
             try {
-                JSONArray arr = new JSONArray(playlistJson);
+                JSONArray arr = new JSONArray(rawJson);
                 for (int i = 0; i < arr.length(); i++) {
                     String item = arr.optString(i, null);
                     if (item != null && !item.isEmpty()) {
-                        playlist.add(item);
+                        rawPlaylist.add(item);
+                        resolvedCache.add(isResolved ? item : null);
                     }
                 }
             } catch (Exception e) {
@@ -212,31 +291,98 @@ public class BackgroundAudioService extends Service {
             }
         }
 
-        if (playlist.isEmpty()) {
-            playlist.add(url);
+        if (rawPlaylist.isEmpty()) {
+            rawPlaylist.add(valueOrDefault(currentSourceUrl, url));
+            resolvedCache.add(url); // current is already resolved
             currentIndex = 0;
         } else {
-            currentIndex = requestedIndex >= 0 && requestedIndex < playlist.size() ? requestedIndex : Math.max(0, playlist.indexOf(url));
-            if (currentIndex < 0) {
-                playlist.add(0, url);
-                currentIndex = 0;
-            }
+            // Find requestedIndex; else find by sourceUrl; else 0
+            currentIndex = (requestedIndex >= 0 && requestedIndex < rawPlaylist.size())
+                ? requestedIndex
+                : Math.max(0, currentSourceUrl != null ? rawPlaylist.indexOf(currentSourceUrl) : 0);
+        }
+
+        // Cache the already-resolved current URL so we don't re-resolve immediately
+        if (currentIndex >= 0 && currentIndex < resolvedCache.size()) {
+            resolvedCache.set(currentIndex, url);
         }
 
         playCurrent();
     }
 
+    /**
+     * Play the track at currentIndex. If its resolved URL isn't cached yet,
+     * resolve it in the background and play once ready. Service main thread is
+     * never blocked by network I/O.
+     */
     private void playCurrent() {
-        if (player == null || currentIndex < 0 || currentIndex >= playlist.size()) {
-            Log.w(TAG, "playCurrent skipped (invalid state) index=" + currentIndex + " size=" + playlist.size());
+        if (player == null || currentIndex < 0 || currentIndex >= rawPlaylist.size()) {
+            Log.w(TAG, "playCurrent skipped (invalid state) index=" + currentIndex + " size=" + rawPlaylist.size());
             return;
         }
 
-        String currentUrl = playlist.get(currentIndex);
-        String urlType = streamUrlResolver.classify(currentUrl);
-        Log.i(TAG, "playCurrent index=" + currentIndex + " urlType=" + urlType + " url=" + currentUrl);
+        String cached = currentIndex < resolvedCache.size() ? resolvedCache.get(currentIndex) : null;
+        if (cached != null && !cached.isEmpty()) {
+            playUrl(cached);
+            // Pre-warm next item resolution in background to make track changes feel instant
+            prefetchNext();
+            return;
+        }
 
-        boolean isLiveProxy = currentUrl != null && currentUrl.contains("/hls-proxy");
+        // Not yet resolved → broadcast buffering and resolve in background
+        broadcastStatus(null);
+        final int idx = currentIndex;
+        if (resolvingIndex == idx) return; // already resolving
+        resolvingIndex = idx;
+        new Thread(() -> {
+            try {
+                String raw = rawPlaylist.get(idx);
+                Log.i(TAG, "Resolving track " + idx + " lazily: " + raw);
+                StreamUrlResolver.ResolveResult r = streamUrlResolver.resolve(raw, null);
+                if (r.ok && r.playableUrl != null) {
+                    if (idx < resolvedCache.size()) resolvedCache.set(idx, r.playableUrl);
+                    // Only play if user hasn't already skipped to another track
+                    if (!stopped && idx == currentIndex) {
+                        progressHandler.post(() -> {
+                            playUrl(r.playableUrl);
+                            prefetchNext();
+                        });
+                    }
+                } else {
+                    Log.w(TAG, "Resolve failed for track " + idx + ": " + r.message);
+                    progressHandler.post(() -> broadcastStatus("재생 불가: " + r.message));
+                }
+            } finally {
+                resolvingIndex = -1;
+            }
+        }).start();
+    }
+
+    /** Resolve the next track in background to make ⏭ feel instant. */
+    private void prefetchNext() {
+        int nextIdx = currentIndex + 1;
+        if (nextIdx >= rawPlaylist.size() || nextIdx >= resolvedCache.size()) return;
+        if (resolvedCache.get(nextIdx) != null) return;
+        new Thread(() -> {
+            try {
+                String raw = rawPlaylist.get(nextIdx);
+                StreamUrlResolver.ResolveResult r = streamUrlResolver.resolve(raw, null);
+                if (r.ok && r.playableUrl != null && nextIdx < resolvedCache.size()) {
+                    resolvedCache.set(nextIdx, r.playableUrl);
+                    Log.d(TAG, "Prefetched track " + nextIdx);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "prefetchNext error: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    private void playUrl(String currentUrl) {
+        if (player == null || currentUrl == null) return;
+        String urlType = streamUrlResolver.classify(currentUrl);
+        Log.i(TAG, "playUrl index=" + currentIndex + " urlType=" + urlType + " url=" + currentUrl);
+
+        boolean isLiveProxy = currentUrl.contains("/hls-proxy");
         MediaItem.Builder mediaItemBuilder = new MediaItem.Builder()
             .setUri(currentUrl)
             .setMimeType(inferMimeType(currentUrl));
@@ -259,11 +405,22 @@ public class BackgroundAudioService extends Service {
 
         Notification notification = buildNotification();
         Log.i(TAG, "startForeground id=" + NOTIFICATION_ID + " title=" + currentTitle);
-        startForeground(NOTIFICATION_ID, notification);
+        // Android 14+ (UPSIDE_DOWN_CAKE, API 34) requires explicit foreground service type
+        // matching one declared in the manifest, or startForeground throws SecurityException.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK);
+            } catch (Exception e) {
+                Log.e(TAG, "startForeground (typed) failed: " + e.getMessage(), e);
+                broadcastStatus("foreground service: " + e.getMessage());
+            }
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
     }
 
     private void playNext() {
-        if (currentIndex < playlist.size() - 1) {
+        if (currentIndex < rawPlaylist.size() - 1) {
             currentIndex++;
             playCurrent();
         }
@@ -278,14 +435,29 @@ public class BackgroundAudioService extends Service {
         }
     }
 
-    private void stopPlayback() {
-        if (player != null) {
-            player.stop();
-            player.clearMediaItems();
+    private boolean stopped = false;
+    private synchronized void stopPlayback() {
+        // Idempotent stop. We do NOT call stopSelf — keeping the service alive avoids
+        // the onCreate/onDestroy race where a quick second ⏹ tap crashes the new instance
+        // (MediaSession collision or null player). Android will GC us when memory needs it.
+        if (stopped && (player == null || player.getPlaybackState() == Player.STATE_IDLE)) {
+            Log.d(TAG, "stopPlayback called again (already idle), ignoring");
+            return;
         }
+        try {
+            if (player != null) {
+                player.setPlayWhenReady(false);
+                player.stop();
+                player.clearMediaItems();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "player.stop() failed: " + e.getMessage());
+        }
+        resolvingIndex = -1;
+        stopped = true;
         progressHandler.removeCallbacks(progressTicker);
-        stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
+        try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (Exception ignored) {}
+        broadcastStatus(null);
     }
 
     private Notification buildNotification() {
@@ -335,23 +507,33 @@ public class BackgroundAudioService extends Service {
         boolean playing = player != null && player.isPlaying();
         int state = player != null ? player.getPlaybackState() : Player.STATE_IDLE;
 
+        boolean resolving = resolvingIndex == currentIndex && currentIndex >= 0;
+        boolean playWhenReady = player != null && player.getPlayWhenReady();
+        long playerDur = player != null ? player.getDuration() : C.TIME_UNSET;
+        long effectiveDur = (playerDur != C.TIME_UNSET && playerDur > 0) ? playerDur : hintDurationMs;
+        long pos = player != null ? player.getCurrentPosition() : 0;
+        if (pos < 0) pos = 0;
         status.putExtra("playing", playing);
-        status.putExtra("buffering", state == Player.STATE_BUFFERING);
-        status.putExtra("positionMs", player != null ? player.getCurrentPosition() : 0);
-        status.putExtra("durationMs", player != null ? Math.max(0, player.getDuration()) : 0);
+        status.putExtra("playWhenReady", playWhenReady);
+        status.putExtra("buffering", state == Player.STATE_BUFFERING || resolving);
+        status.putExtra("positionMs", pos);
+        status.putExtra("durationMs", Math.max(0, effectiveDur));
         status.putExtra("index", currentIndex);
-        status.putExtra("hasNext", currentIndex >= 0 && currentIndex < playlist.size() - 1);
+        status.putExtra("hasNext", currentIndex >= 0 && currentIndex < rawPlaylist.size() - 1);
         status.putExtra("hasPrev", currentIndex > 0);
-        status.putExtra("currentUrl", currentIndex >= 0 && currentIndex < playlist.size() ? playlist.get(currentIndex) : null);
+        String currentRaw = currentIndex >= 0 && currentIndex < rawPlaylist.size() ? rawPlaylist.get(currentIndex) : null;
+        String currentResolved = currentIndex >= 0 && currentIndex < resolvedCache.size() ? resolvedCache.get(currentIndex) : null;
+        status.putExtra("currentUrl", currentResolved != null ? currentResolved : currentRaw);
         status.putExtra("title", currentTitle);
         status.putExtra("artist", currentArtist);
         status.putExtra("playbackState", playbackStateName(state));
-        // JS-friendly state string
+        // JS-friendly state string. Use playWhenReady (user intent) over isPlaying
+        // so brief audio-focus dips don't flip UI to "paused" while user is listening.
         String stateStr;
         switch (state) {
             case Player.STATE_IDLE: stateStr = "idle"; break;
-            case Player.STATE_BUFFERING: stateStr = "buffering"; break;
-            case Player.STATE_READY: stateStr = playing ? "playing" : "paused"; break;
+            case Player.STATE_BUFFERING: stateStr = playWhenReady ? "buffering" : "paused"; break;
+            case Player.STATE_READY: stateStr = playWhenReady ? "playing" : "paused"; break;
             case Player.STATE_ENDED: stateStr = "ended"; break;
             default: stateStr = "idle";
         }
@@ -360,6 +542,9 @@ public class BackgroundAudioService extends Service {
             status.putExtra("error", error);
         }
 
+        // Explicit package targeting: ensures broadcast is delivered to our app's receiver
+        // even with Android 14+ stricter broadcast routing rules.
+        status.setPackage(getPackageName());
         sendBroadcast(status);
     }
 
@@ -378,6 +563,69 @@ public class BackgroundAudioService extends Service {
 
     private String valueOrDefault(String value, String fallback) {
         return value == null || value.isEmpty() ? fallback : value;
+    }
+
+    // Probe duration via MediaMetadataRetriever using a FileDescriptor (required for
+    // content:// URIs under Scoped Storage — (Context, Uri) variant silently fails).
+    private long mediaMetadataDuration(android.net.Uri uri) {
+        android.os.ParcelFileDescriptor pfd = null;
+        android.media.MediaMetadataRetriever mmr = null;
+        try {
+            pfd = getContentResolver().openFileDescriptor(uri, "r");
+            if (pfd == null) return 0;
+            mmr = new android.media.MediaMetadataRetriever();
+            mmr.setDataSource(pfd.getFileDescriptor());
+            String d = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+            if (d != null) {
+                long ms = Long.parseLong(d);
+                Log.i(TAG, "mediaMetadataDuration → " + ms + "ms");
+                return ms;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "mediaMetadataDuration failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        } finally {
+            if (mmr != null) try { mmr.release(); } catch (Exception ignored) {}
+            if (pfd != null) try { pfd.close(); } catch (Exception ignored) {}
+        }
+        return 0;
+    }
+
+    private long mediaPlayerDuration(android.net.Uri uri) {
+        android.os.ParcelFileDescriptor pfd = null;
+        android.media.MediaPlayer mediaPlayer = null;
+        try {
+            pfd = getContentResolver().openFileDescriptor(uri, "r");
+            if (pfd == null) return 0;
+            mediaPlayer = new android.media.MediaPlayer();
+            mediaPlayer.setDataSource(pfd.getFileDescriptor());
+            mediaPlayer.prepare();
+            long ms = mediaPlayer.getDuration();
+            if (ms > 0) {
+                Log.i(TAG, "mediaPlayerDuration -> " + ms + "ms");
+                return ms;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "mediaPlayerDuration failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        } finally {
+            if (mediaPlayer != null) try { mediaPlayer.release(); } catch (Exception ignored) {}
+            if (pfd != null) try { pfd.close(); } catch (Exception ignored) {}
+        }
+        return 0;
+    }
+
+    private long queryContentDuration(android.net.Uri uri) {
+        try (android.database.Cursor c = getContentResolver().query(
+                uri,
+                new String[]{android.provider.MediaStore.Audio.Media.DURATION},
+                null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                int idx = c.getColumnIndex(android.provider.MediaStore.Audio.Media.DURATION);
+                if (idx >= 0) return c.getLong(idx);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "queryContentDuration failed: " + e.getMessage());
+        }
+        return 0;
     }
 
     private String playbackStateName(int state) {

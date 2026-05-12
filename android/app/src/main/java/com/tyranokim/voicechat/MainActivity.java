@@ -9,6 +9,7 @@ import com.getcapacitor.BridgeActivity;
 import com.tyranokim.voicechat.stt.NativeSttPlugin;
 import com.tyranokim.voicechat.updater.AppUpdaterPlugin;
 import com.tyranokim.voicechat.downloader.FileDownloaderPlugin;
+import com.tyranokim.voicechat.downloader.MusicLibraryPlugin;
 import com.tyranokim.voicechat.audio.NativeAudioPlugin;
 import com.tyranokim.voicechat.audio.BackgroundAudioPlugin;
 // import com.tyranokim.voicechat.fcm.FcmPlugin;  // google-services.json 없으면 크래시
@@ -26,6 +27,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeSttPlugin.class);
         registerPlugin(AppUpdaterPlugin.class);
         registerPlugin(FileDownloaderPlugin.class);
+        registerPlugin(MusicLibraryPlugin.class);
         registerPlugin(NativeAudioPlugin.class);
         registerPlugin(BackgroundAudioPlugin.class);
         // registerPlugin(FcmPlugin.class);  // FCM 비활성화 (google-services.json 필요)

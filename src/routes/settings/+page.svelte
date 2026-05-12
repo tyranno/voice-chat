@@ -8,7 +8,7 @@
 	onMount(() => window.addEventListener('hardwareBackPress', onBackPress));
 	onDestroy(() => window.removeEventListener('hardwareBackPress', onBackPress));
 	import { checkServerHealth } from '$lib/api/health';
-	import { checkForUpdate, downloadAndInstall, type ApkInfo } from '$lib/api/updater';
+	import { checkForUpdate, downloadAndInstall, triggerInstall, type ApkInfo } from '$lib/api/updater';
 
 	let micPermission = $state<'unknown' | 'granted' | 'denied'>('unknown');
 	onMount(async () => {
@@ -41,7 +41,7 @@
 	let testStatus = $state<'idle' | 'testing' | 'ok' | 'error'>('idle');
 	let testMessage = $state('');
 
-	let updateStatus = $state<'idle' | 'checking' | 'available' | 'downloading' | 'done' | 'error'>('idle');
+	let updateStatus = $state<'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'done' | 'error'>('idle');
 	let updateInfo = $state<ApkInfo | null>(null);
 	let updateError = $state('');
 	let downloadProgress = $state(0);
@@ -79,10 +79,20 @@
 			downloadProgress = percent;
 		});
 		if (result.success) {
+			updateStatus = 'downloaded';
+		} else {
+			updateStatus = 'error';
+			updateError = result.error || '다운로드 실패';
+		}
+	}
+
+	async function onInstallNow() {
+		const r = await triggerInstall();
+		if (r.success) {
 			updateStatus = 'done';
 		} else {
 			updateStatus = 'error';
-			updateError = result.error || '설치 실패';
+			updateError = r.error || '설치 시작 실패';
 		}
 	}
 </script>
@@ -184,13 +194,14 @@
 			<h2 class="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">📦 앱 업데이트</h2>
 			<div class="space-y-3 bg-gray-900 rounded-xl p-4">
 				{#if updateStatus === 'downloading'}
+					{@const pct = Number.isFinite(downloadProgress) && downloadProgress >= 0 ? downloadProgress : 0}
 					<div class="space-y-2">
 						<div class="flex justify-between text-sm">
 							<span>다운로드 중...</span>
-							<span>{downloadProgress}%</span>
+							<span>{pct}%</span>
 						</div>
 						<div class="w-full bg-gray-700 rounded-full h-2">
-							<div class="bg-blue-500 h-2 rounded-full transition-all" style="width: {downloadProgress}%"></div>
+							<div class="bg-blue-500 h-2 rounded-full transition-all" style="width: {pct}%"></div>
 						</div>
 					</div>
 				{:else if updateStatus === 'available' && updateInfo}
@@ -202,7 +213,18 @@
 						onclick={onDownloadInstall}
 						class="w-full px-4 py-2 rounded-lg font-medium bg-emerald-500 hover:bg-emerald-400 text-white transition-colors"
 					>
-						⬇️ 다운로드 & 설치
+						⬇️ 다운로드
+					</button>
+				{:else if updateStatus === 'downloaded'}
+					<div class="text-sm space-y-1">
+						<p class="text-green-400">✅ 다운로드 완료</p>
+						<p class="text-xs text-gray-500">아래 버튼을 누르면 설치 화면이 즉시 열립니다.</p>
+					</div>
+					<button
+						onclick={onInstallNow}
+						class="w-full px-4 py-3 rounded-lg font-medium bg-emerald-500 hover:bg-emerald-400 text-white transition-colors animate-pulse"
+					>
+						📦 지금 설치
 					</button>
 				{:else if updateStatus === 'error'}
 					<p class="text-sm text-red-400">{updateError}</p>
@@ -274,8 +296,9 @@
 		<!-- Info -->
 		<section>
 			<div class="bg-gray-900/50 rounded-xl p-4 text-sm text-gray-500">
-				<p>🦖 Rex v0.3</p>
+				<p>🦖 Rex v0.10.24</p>
 				<p>App → GCP Server → ClawBridge → OpenClaw</p>
+				<p class="text-[10px] text-gray-600 mt-1">+ 서비스 측 항상 duration 프로브 + dev 모드 dur/pos 표시 + JS 측 string coerce</p>
 			</div>
 		</section>
 	</div>

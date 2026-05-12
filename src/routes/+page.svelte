@@ -25,7 +25,7 @@
 	import {
 		play as bgPlay, pause as bgPause, resume as bgResume,
 		stop as bgStop, next as bgNext, prev as bgPrev,
-		onStatus as bgOnStatus
+		onStatus as bgOnStatus, requestStatus as bgRequestStatus
 	} from '$lib/audio/backgroundAudio';
 	import AppHeader from '$lib/components/AppHeader.svelte';
 	import ConversationSidebar from '$lib/components/ConversationSidebar.svelte';
@@ -69,6 +69,12 @@
 	let musicSpeed = $state(1.0);
 	let isNativeMusicPlatform = $state(Capacitor.isNativePlatform());
 	let removeBgStatusListener: (() => void) | null = null;
+	// Background-audio sync (so main page shows currently-playing track even after coming back)
+	let bgPlaying = $state(false);
+	let bgPlayWhenReady = $state(false);
+	let bgStateStr = $state<'idle' | 'buffering' | 'playing' | 'paused' | 'ended' | 'error' | 'ready'>('idle');
+	let bgTitle = $state('');
+	let bgCurrentUrl = $state('');
 
 	function musicCommand(cmd: string, args: any[] = []) {
 		if (!musicIframe?.contentWindow) return;
@@ -338,6 +344,18 @@
 		initMusicHistory();
 
 		// Register FCM token
+		// Sync background-audio state so main page shows currently-playing on resume
+		if (isNativeMusicPlatform) {
+			removeBgStatusListener = await bgOnStatus((s) => {
+				bgPlaying = s.playing;
+				bgPlayWhenReady = s.playWhenReady ?? s.playing;
+				if (s.state) bgStateStr = s.state;
+				if (s.title) bgTitle = s.title;
+				if (s.currentUrl) bgCurrentUrl = s.currentUrl;
+			});
+			try { await bgRequestStatus(); } catch {}
+		}
+
 		registerFcmToken().then(token => {
 			if (token) addDebug(`FCM 등록 완료`);
 		});
@@ -508,6 +526,7 @@
 				stt?.stop();
 			}
 			tts?.stop();
+			removeBgStatusListener?.();
 		};
 		} catch (e) {
 			addDebug(`onMount 에러: ${e}`);
@@ -1019,6 +1038,42 @@
 		onToggleMic={toggleMic}
 		onClearError={() => (sttError = '')}
 	/>
+
+	<!-- Background audio indicator (when ExoPlayer is running but mini-player isn't shown) -->
+	{#if isNativeMusicPlatform && bgCurrentUrl && !musicVideoId && (bgStateStr === 'playing' || bgStateStr === 'buffering' || bgPlayWhenReady)}
+		<div class="flex-shrink-0 px-4 pb-2">
+			<div
+				role="button" tabindex="0"
+				onclick={() => goto('/music')}
+				onkeydown={(e) => { if (e.key === 'Enter') goto('/music'); }}
+				class="w-full flex items-center gap-3 px-3 py-2 rounded-xl bg-emerald-900/40 border border-emerald-700/50 hover:bg-emerald-900/60 transition-colors text-left cursor-pointer"
+			>
+				<span class="text-xl flex-shrink-0">{bgStateStr === 'buffering' ? '⏳' : '🎵'}</span>
+				<div class="flex-1 min-w-0">
+					<p class="text-xs text-emerald-300">백그라운드 재생 중 · 탭하여 보기</p>
+					<p class="text-sm text-white truncate">{bgTitle || '재생 중'}</p>
+				</div>
+				{#if bgPlaying || bgPlayWhenReady}
+					<button
+						onclick={(e) => { e.stopPropagation(); bgPause(); }}
+						class="flex-shrink-0 p-1.5 rounded-lg bg-emerald-700/50 hover:bg-emerald-600/50"
+						aria-label="일시정지"
+					>⏸</button>
+				{:else}
+					<button
+						onclick={(e) => { e.stopPropagation(); bgResume(); }}
+						class="flex-shrink-0 p-1.5 rounded-lg bg-emerald-700/50 hover:bg-emerald-600/50"
+						aria-label="재생"
+					>▶</button>
+				{/if}
+				<button
+					onclick={(e) => { e.stopPropagation(); bgStop(); }}
+					class="flex-shrink-0 p-1.5 rounded-lg bg-red-700/50 hover:bg-red-600/50"
+					aria-label="정지"
+				>⏹</button>
+			</div>
+		</div>
+	{/if}
 
 	{#if musicVideoId}
 		<MusicMiniPlayer

@@ -2,8 +2,12 @@ import { Capacitor, registerPlugin } from '@capacitor/core';
 import { settings } from '$lib/stores/settings.svelte';
 
 interface AppUpdaterPlugin {
-	downloadAndInstall(opts: { url: string }): Promise<{ success: boolean }>;
-	addListener(event: 'downloadProgress', fn: (data: { progress: number; downloaded: number; total: number }) => void): Promise<{ remove: () => void }>;
+	downloadAndInstall(opts: { url: string }): Promise<{ success: boolean; downloaded?: boolean; size?: number }>;
+	installPending(): Promise<{ success: boolean }>;
+	addListener(
+		event: 'downloadProgress',
+		fn: (data: { progress: number; downloaded?: number; total?: number }) => void
+	): Promise<{ remove: () => void }>;
 }
 
 const AppUpdater = registerPlugin<AppUpdaterPlugin>('AppUpdater');
@@ -40,14 +44,27 @@ export async function downloadAndInstall(
 		let listenerHandle: { remove: () => void } | null = null;
 		if (onProgress) {
 			listenerHandle = await AppUpdater.addListener('downloadProgress', (data) => {
-				onProgress(data.progress);
+				const p = data?.progress;
+				if (typeof p === 'number' && Number.isFinite(p) && p >= 0) {
+					onProgress(p);
+				}
 			});
 		}
 
 		const result = await AppUpdater.downloadAndInstall({ url });
 
 		if (listenerHandle) listenerHandle.remove();
-		return { success: result.success };
+		return { success: !!result?.success };
+	} catch (e: any) {
+		return { success: false, error: e.message };
+	}
+}
+
+export async function triggerInstall(): Promise<{ success: boolean; error?: string }> {
+	if (!Capacitor.isNativePlatform()) return { success: false, error: 'Only available on Android' };
+	try {
+		const r = await AppUpdater.installPending();
+		return { success: !!r?.success };
 	} catch (e: any) {
 		return { success: false, error: e.message };
 	}

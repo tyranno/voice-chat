@@ -31,16 +31,20 @@ public class BackgroundAudioPlugin extends Plugin {
     public static final String ACTION_NEXT = "com.tyranokim.voicechat.audio.ACTION_NEXT";
     public static final String ACTION_PREV = "com.tyranokim.voicechat.audio.ACTION_PREV";
     public static final String ACTION_SEEK = "com.tyranokim.voicechat.audio.ACTION_SEEK";
+    public static final String ACTION_RATE = "com.tyranokim.voicechat.audio.ACTION_RATE";
     public static final String ACTION_STATUS = "com.tyranokim.voicechat.audio.ACTION_STATUS";
 
     public static final String EXTRA_URL = "url";
     public static final String EXTRA_TITLE = "title";
     public static final String EXTRA_ARTIST = "artist";
-    public static final String EXTRA_PLAYLIST = "playlist";
+    public static final String EXTRA_PLAYLIST = "playlist";        // resolved URLs (legacy)
+    public static final String EXTRA_RAW_PLAYLIST = "rawPlaylist"; // raw source URLs (new, lazy resolve)
     public static final String EXTRA_INDEX = "index";
     public static final String EXTRA_SOURCE_URL = "sourceUrl";
     public static final String EXTRA_URL_TYPE = "urlType";
     public static final String EXTRA_POSITION_MS = "positionMs";
+    public static final String EXTRA_RATE = "rate";
+    public static final String EXTRA_DURATION_MS = "durationMs";
 
     private BroadcastReceiver statusReceiver;
     private final StreamUrlResolver streamUrlResolver = new StreamUrlResolver();
@@ -54,6 +58,7 @@ public class BackgroundAudioPlugin extends Plugin {
             public void onReceive(Context context, Intent intent) {
                 JSObject payload = new JSObject();
                 payload.put("playing", intent.getBooleanExtra("playing", false));
+                payload.put("playWhenReady", intent.getBooleanExtra("playWhenReady", false));
                 payload.put("buffering", intent.getBooleanExtra("buffering", false));
                 payload.put("currentUrl", intent.getStringExtra("currentUrl"));
                 payload.put("title", intent.getStringExtra("title"));
@@ -101,6 +106,8 @@ public class BackgroundAudioPlugin extends Plugin {
         new Thread(() -> {
             try {
                 String playableHint = call.getString("resolvedUrl", call.getString("playableUrl", null));
+                // Resolve ONLY the currently-requested track so playback starts quickly.
+                // Remaining playlist items resolve lazily in the service on track change.
                 StreamUrlResolver.ResolveResult current = streamUrlResolver.resolve(sourceUrl, playableHint);
                 if (!current.ok || current.playableUrl == null) {
                     String error = current.message != null ? current.message : "Failed to resolve playable URL";
@@ -109,7 +116,7 @@ public class BackgroundAudioPlugin extends Plugin {
                     return;
                 }
 
-                List<String> resolvedPlaylist = resolvePlaylist(call.getArray("playlist"), sourceUrl, playableHint);
+                List<String> rawPlaylist = collectRawPlaylist(call.getArray("playlist"), sourceUrl);
                 int requestedIndex = call.getInt("index", -1);
 
                 Intent intent = serviceIntent(ACTION_PLAY);
@@ -118,10 +125,22 @@ public class BackgroundAudioPlugin extends Plugin {
                 intent.putExtra(EXTRA_URL_TYPE, current.sourceType);
                 intent.putExtra(EXTRA_TITLE, call.getString("title", "Voice Chat Audio"));
                 intent.putExtra(EXTRA_ARTIST, call.getString("artist", "Voice Chat"));
-                intent.putExtra(EXTRA_PLAYLIST, new JSONArray(resolvedPlaylist).toString());
+                intent.putExtra(EXTRA_RAW_PLAYLIST, new JSONArray(rawPlaylist).toString());
                 intent.putExtra(EXTRA_INDEX, requestedIndex);
+                // Use raw JSON access so larger values + double-encoded numbers don't lose precision
+                long durHintLong = 0L;
+                try {
+                    Object durRaw = call.getData().opt("durationMs");
+                    if (durRaw instanceof Number) {
+                        durHintLong = ((Number) durRaw).longValue();
+                    }
+                } catch (Exception ignored) {}
+                if (durHintLong > 0) {
+                    intent.putExtra(EXTRA_DURATION_MS, durHintLong);
+                }
+                final long durHint = durHintLong;
 
-                Log.i(TAG, "play -> service: sourceType=" + current.sourceType + ", playlistSize=" + resolvedPlaylist.size());
+                Log.i(TAG, "play -> service: sourceType=" + current.sourceType + ", rawPlaylistSize=" + rawPlaylist.size() + " durationHintMs=" + durHint + " (lazy resolve enabled)");
                 startService(intent);
                 getActivity().runOnUiThread(call::resolve);
             } catch (Exception e) {
@@ -163,6 +182,30 @@ public class BackgroundAudioPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getStatus(PluginCall call) {
+        // Force a status broadcast so JS can fill state on app resume / first mount
+        Intent intent = serviceIntent("com.tyranokim.voicechat.audio.ACTION_PING");
+        startService(intent);
+        // Build a quick best-effort snapshot from the service's last-known fields via broadcast
+        // The actual status arrives via the broadcast receiver shortly after.
+        JSObject result = new JSObject();
+        result.put("requested", true);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void setRate(PluginCall call) {
+        Double rateD = call.getDouble("rate", 1.0);
+        float rate = rateD != null ? rateD.floatValue() : 1.0f;
+        if (rate < 0.25f) rate = 0.25f;
+        if (rate > 3.0f) rate = 3.0f;
+        Intent intent = serviceIntent(ACTION_RATE);
+        intent.putExtra(EXTRA_RATE, rate);
+        startService(intent);
+        call.resolve();
+    }
+
+    @PluginMethod
     public void seek(PluginCall call) {
         int positionMs = call.getInt("positionMs", -1);
         if (positionMs < 0) {
@@ -175,30 +218,25 @@ public class BackgroundAudioPlugin extends Plugin {
         call.resolve();
     }
 
-    private List<String> resolvePlaylist(JSONArray playlistArray, String fallbackSourceUrl, String fallbackPlayableHint) {
-        List<String> resolved = new ArrayList<>();
-
+    /**
+     * Collect raw playlist URLs WITHOUT resolving them. The service will resolve
+     * each item lazily when it's about to play (on track end / next / prev).
+     * This keeps the play() promise fast (one resolve, not N).
+     */
+    private List<String> collectRawPlaylist(JSONArray playlistArray, String fallbackSourceUrl) {
+        List<String> raw = new ArrayList<>();
         if (playlistArray != null && playlistArray.length() > 0) {
             for (int i = 0; i < playlistArray.length(); i++) {
-                String raw = playlistArray.optString(i, null);
-                if (raw == null || raw.isEmpty()) continue;
-                StreamUrlResolver.ResolveResult result = streamUrlResolver.resolve(raw, null);
-                if (result.ok && result.playableUrl != null) {
-                    resolved.add(result.playableUrl);
-                } else {
-                    Log.w(TAG, "Skipping unplayable playlist URL index=" + i + " type=" + result.sourceType);
+                String item = playlistArray.optString(i, null);
+                if (item != null && !item.isEmpty()) {
+                    raw.add(item);
                 }
             }
         }
-
-        if (resolved.isEmpty()) {
-            StreamUrlResolver.ResolveResult current = streamUrlResolver.resolve(fallbackSourceUrl, fallbackPlayableHint);
-            if (current.ok && current.playableUrl != null) {
-                resolved.add(current.playableUrl);
-            }
+        if (raw.isEmpty() && fallbackSourceUrl != null && !fallbackSourceUrl.isEmpty()) {
+            raw.add(fallbackSourceUrl);
         }
-
-        return resolved;
+        return raw;
     }
 
     private Intent serviceIntent(String action) {
@@ -208,6 +246,20 @@ public class BackgroundAudioPlugin extends Plugin {
     }
 
     private void startService(Intent intent) {
-        ContextCompat.startForegroundService(getContext(), intent);
+        // Only ACTION_PLAY actually starts a foreground media session (playUrl calls
+        // startForeground). Other actions (PING/PAUSE/STOP/SEEK/RATE/NEXT/PREV/RESUME) only
+        // fire while the WebView/Activity is visible — plain startService is sufficient and
+        // safe. Using startForegroundService for these would trip the
+        // ForegroundServiceDidNotStartInTimeException timer (~5s) and randomly kill the app.
+        String action = intent.getAction();
+        if (ACTION_PLAY.equals(action)) {
+            ContextCompat.startForegroundService(getContext(), intent);
+        } else {
+            try {
+                getContext().startService(intent);
+            } catch (IllegalStateException e) {
+                Log.w(TAG, "startService(" + action + ") failed: " + e.getMessage());
+            }
+        }
     }
 }
