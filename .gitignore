@@ -1,5 +1,20 @@
 node_modules
 
+# Claude / bkit
+.bkit/
+.claude/
+
+# Migration scripts - sensitive data
+scripts/*.tar.gz
+scripts/*.gz
+scripts/home-backup.tar.gz
+scripts/vc-data-backup.tar.gz
+scripts/crontab-backup.txt
+scripts/cf_url*.txt
+
+# Screenshots
+*.png
+
 # Output
 .output
 .vercel
