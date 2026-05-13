@@ -1,13 +1,43 @@
 # NanoPi 마이그레이션 - 작업 목록
 
-> 작성: 2026-05-12, 갱신: 2026-05-13
+> 작성: 2026-05-12, 최종 갱신: 2026-05-13 저녁
 > 집 작업 완료 후 회사에서 이어서 진행
 
 ---
 
-## ⚠️⚠️ 긴급: NanoPi 먹통 상태 (2026-05-13) ⚠️⚠️
+## 🚨 다음 큰 작업: NanoPC-T4 OS 재플래시 (오늘 저녁)
 
-**현재 NanoPi가 hang 됨. 원격 복구 불가. 집에서 물리적 조치 필요.**
+**Ubuntu 24.04 Noble core**로 재플래시 → Node 22 네이티브, 최신 커널, openclaw 격리 불필요
+
+📖 **종합 가이드**: [`voice-chat-server/migration/nanopc-t4-reflash/README.md`](../voice-chat-server/migration/nanopc-t4-reflash/README.md)
+
+관련 문서:
+- [README.md](../voice-chat-server/migration/nanopc-t4-reflash/README.md) — 전체 가이드 (Phase 0~12)
+- [CLOUDFLARE.md](../voice-chat-server/migration/nanopc-t4-reflash/CLOUDFLARE.md) — Tunnel/DNS 처리
+- [BACKUP-MANIFEST.md](../voice-chat-server/migration/nanopc-t4-reflash/BACKUP-MANIFEST.md) — 백업 파일 일람
+- [scripts/post-install.sh](../voice-chat-server/migration/nanopc-t4-reflash/scripts/post-install.sh) — 재플래시 후 자동 복원
+
+백업 위치 (PC, 시크릿 포함이라 git 외 보관): `C:\Users\lab\Downloads\gcp-backup\`
+
+---
+
+## ✅ 해결된 이슈 (2026-05-13)
+
+| 이슈 | 상태 |
+|---|---|
+| NanoPi 먹통 (죽은 SD카드의 mmcqd) | ✅ SD 빼고 재부팅으로 복구 |
+| yt-dlp Python 3.6 크래시 | ✅ standalone aarch64 바이너리로 교체 |
+| systemd PrivateTmp 누락 | ✅ 추가 |
+| YouTube webm 폴백 (m4a 안 나옴) | ✅ deno 설치로 yt-dlp JS 런타임 활성화 |
+| 서버 `--js-runtimes node:/usr/bin/node` 잘못된 경로 | ✅ 자동 감지로 변경 |
+| SSH 키 인증 (회사 PC 어디서든 `ssh nanopi`) | ✅ id_rsa 등록 |
+| GCP 종료 전 전체 데이터 백업 | ✅ 42MB tarball + cloudflared/nvm/data 별도 |
+
+---
+
+## ⚠️ 이전 hang 이슈 (참고)
+
+NanoPi가 한 번 hang 됐었음:
 
 ### 원인
 - 128G SD카드(`/dev/mmcblk0`)가 쓰기 I/O 에러 (`error -110 timeout`, `Input/output error during write`)
