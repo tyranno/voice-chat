@@ -1,18 +1,27 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
-import paramiko, json, io, os, base64, time
+import paramiko, json, io, os, sys, base64, time
+
+# 환경변수로 비밀정보 분리 (평문 commit 방지)
+#   NANOPI_SSH_PASSWORD: NanoPi tyranno user password
+#   PAIR_REQ_ID 또는 argv[1]: 승인할 pending 요청 ID (UUID)
+PASSWORD = os.environ.get('NANOPI_SSH_PASSWORD')
+if not PASSWORD:
+    raise SystemExit('NANOPI_SSH_PASSWORD env var required')
+
+REQ_ID = os.environ.get('PAIR_REQ_ID') or (sys.argv[1] if len(sys.argv) > 1 else None)
+if not REQ_ID:
+    raise SystemExit('PAIR_REQ_ID env var or argv[1] required (pending request UUID)')
 
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('192.168.123.200', username='tyranno', password='1234', timeout=10)
+ssh.connect('192.168.123.200', username='tyranno', password=PASSWORD, timeout=10)
 sftp = ssh.open_sftp()
 
 def run(cmd, timeout=15):
     i,o,e = ssh.exec_command(cmd, timeout=timeout)
     r = (o.read()+e.read()).decode('utf-8','replace').strip()
     if r: print(r)
-
-REQ_ID = 'c6907553-f2ce-4d13-b0b1-76be55c1ab54'
 
 f = sftp.open('/home/tyranno/.openclaw/devices/pending.json', 'r')
 pending = json.loads(f.read().decode('utf-8'))

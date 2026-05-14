@@ -275,7 +275,7 @@
 				searchError = '검색 결과가 없습니다.';
 				hasMoreResults = false;
 			} else {
-				if (searchResults.length < PAGE_SIZE) hasMoreResults = false;
+				// yt-dlp ytsearch50: often returns 48~49 due to dedup; trust server's empty response as the only "end" signal.
 				savePlaylist(query.trim(), searchResults.map(r => ({ videoId: r.videoId, title: r.title })));
 				refreshData();
 			}
@@ -300,7 +300,8 @@
 			} else {
 				searchResults = [...searchResults, ...newItems];
 				searchOffset = searchResults.length;
-				if (newItems.length < PAGE_SIZE) hasMoreResults = false;
+				// Do NOT terminate on newItems.length < PAGE_SIZE — yt-dlp returns 48~49 per page due to dedup
+				// across cache growth. Let the next page (which may legitimately return 0) end the sequence.
 			}
 		} catch (e: any) {
 			// silent fail on pagination — keep what we have

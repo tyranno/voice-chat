@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
-import paramiko
+import os, paramiko
+
+# 환경변수로 비밀정보 분리: NANOPI_SSH_PASSWORD
+PASSWORD = os.environ.get('NANOPI_SSH_PASSWORD')
+if not PASSWORD:
+    raise SystemExit('NANOPI_SSH_PASSWORD env var required')
 
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('192.168.123.200', username='tyranno', password='1234', timeout=10)
+ssh.connect('192.168.123.200', username='tyranno', password=PASSWORD, timeout=10)
 
 def run(cmd, timeout=15):
     stdin, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)

@@ -3,6 +3,9 @@ node_modules
 # Claude / bkit
 .bkit/
 .claude/
+docs/.bkit-memory.json
+docs/.pdca-status.json
+docs/.pdca-snapshots/
 
 # Migration scripts - sensitive data
 scripts/*.tar.gz
