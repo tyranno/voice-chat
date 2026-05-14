@@ -2,6 +2,7 @@
 
 > 최종 갱신: 2026-05-14
 > GCP → NanoPi M4 마이그레이션 **완료**. 이제 서버는 NanoPi 단독 운영.
+> 외부 SSH (`ssh nanopi`) 정상 동작 확인.
 
 ---
 
@@ -53,6 +54,27 @@ Host nanopi-lan
 
 ---
 
+## ⚠️ cloudflared config 주의사항
+
+실제 사용 중인 config: **`/home/tyranno/.cloudflared/config.yml`** (systemd ExecStart 기준)
+`/etc/cloudflared/config.yml` 은 사용 안 함 — 수정해도 적용 안 됨!
+
+현재 ingress 구성:
+```yaml
+ingress:
+  - hostname: voicechat.tyranno.xyz
+    service: http://localhost:8090
+  - hostname: openclaw.tyranno.xyz
+    service: http://localhost:18789
+  - hostname: ssh.tyranno.xyz
+    service: ssh://localhost:22
+  - service: http_status:404
+```
+
+수정 후 반드시 `sudo systemctl restart cloudflared` 필요.
+
+---
+
 ## 주요 파일 위치 (NanoPi)
 
 ```
@@ -98,6 +120,8 @@ sudo fail2ban-client status sshd   # 차단 현황
 | GCP 서비스 중지 + 프로젝트 삭제 | ✅ |
 | 계정 암호 변경 (pi, tyranno → tyranno1q2w3e4r) | ✅ |
 | fail2ban 설치 (SSH 브루트포스 차단) | ✅ |
+| 외부 SSH Tunnel 복구 (ssh.tyranno.xyz) | ✅ |
+| 회사 PC 공개키 authorized_keys 등록 | ✅ |
 
 ---
 
